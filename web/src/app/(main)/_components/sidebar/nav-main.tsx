@@ -86,7 +86,9 @@ function hasSubItems(item: NavMainItem): item is NavMainParentItem {
 
 export function NavMain({ items }: NavMainProps) {
   const rawPath = usePathname();
-  // 路由段含中文，pathname 可能是百分号编码，解码后再与导航 url 比较，保证高亮命中。
+  // ルートセグメントに中国語が含まれ得るため、pathname がパーセントエンコード
+  // されている場合がある。デコードしてからナビゲーションの url と比較し、
+  // ハイライトが確実に一致するようにする。
   const path = (() => {
     try {
       return decodeURIComponent(rawPath);
@@ -161,8 +163,8 @@ function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItem
   );
 }
 
-// InterceptPendingBadge polls /api/intercept/pending every 5 s and shows a red
-// count badge when there are unresolved approval requests.
+// InterceptPendingBadge は /api/intercept/pending を 5 秒ごとにポーリングし、
+// 未解決の承認リクエストがある場合は赤い件数バッジを表示する。
 function InterceptPendingBadge() {
   const [count, setCount] = React.useState(0);
   React.useEffect(() => {

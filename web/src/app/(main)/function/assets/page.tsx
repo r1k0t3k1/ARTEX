@@ -98,13 +98,13 @@ function statusTone(code: number) {
 const PAGE_SIZES = [25, 50, 100, 200];
 
 const TABS: { key: string; label: string; icon: LucideIcon }[] = [
-  { key: "company", label: "企业", icon: BuildingIcon },
-  { key: "root_domain", label: "根域名", icon: GlobeIcon },
+  { key: "company", label: "企業", icon: BuildingIcon },
+  { key: "root_domain", label: "ルートドメイン", icon: GlobeIcon },
   { key: "ip", label: "IP", icon: NetworkIcon },
-  { key: "subdomain", label: "子域名", icon: GlobeIcon },
-  { key: "app", label: "应用", icon: SmartphoneIcon },
-  { key: "service", label: "服务", icon: LayoutTemplateIcon },
-  { key: "endpoint", label: "接口", icon: LinkIcon },
+  { key: "subdomain", label: "サブドメイン", icon: GlobeIcon },
+  { key: "app", label: "アプリ", icon: SmartphoneIcon },
+  { key: "service", label: "サービス", icon: LayoutTemplateIcon },
+  { key: "endpoint", label: "エンドポイント", icon: LinkIcon },
 ];
 
 export default function AssetsPage() {
@@ -123,34 +123,34 @@ export default function AssetsPage() {
   const assetsRequestRef = React.useRef(0);
   const [rowsTab, setRowsTab] = React.useState("");
 
-  // asset selection & delete
+  // 資産の選択と削除
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [deleteIds, setDeleteIds] = React.useState<number[]>([]);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
-  // company delete
+  // 企業の削除
   const [companyDeleteTarget, setCompanyDeleteTarget] = React.useState<Company | null>(null);
   const [companyDeleteAssets, setCompanyDeleteAssets] = React.useState(false);
   const [companyDeleting, setCompanyDeleting] = React.useState(false);
 
-  // Companies + per-type counts (tab badges) — loaded on demand, no background polling.
+  // 企業 + 種別ごとの件数(タブのバッジ)。必要なときだけ読み込み、バックグラウンドポーリングはしない。
   const loadMeta = React.useCallback(() => {
     api
       .companies()
       .then(setCompanies)
       .catch(() => {
-        /* Keep the last successful company snapshot on a transient failure. */
+        /* 一時的な失敗の間は最後に成功した企業スナップショットを保持する。 */
       });
     api
       .assetCounts()
       .then(setCounts)
       .catch(() => {
-        /* Keep the last successful counters on a transient failure. */
+        /* 一時的な失敗の間は最後に成功したカウンタを保持する。 */
       });
   }, []);
 
-  // Manual refresh: reload counts/companies and re-fetch the current page.
+  // 手動更新:件数/企業を再読み込みし、現在のページを再取得する。
   const refresh = React.useCallback(() => {
     loadMeta();
     setRefreshKey((k) => k + 1);
@@ -192,11 +192,11 @@ export default function AssetsPage() {
     setDeleting(true);
     try {
       const res = await api.deleteAssets(deleteIds);
-      toast.success(`已删除 ${res.deleted} 条资产`);
+      toast.success(`資産を ${res.deleted} 件削除しました`);
       setSelected(new Set());
       refresh();
     } catch (e) {
-      toast.error("删除失败：" + String((e as Error)?.message ?? e));
+      toast.error("削除に失敗しました：" + String((e as Error)?.message ?? e));
     } finally {
       setDeleting(false);
       setDeleteOpen(false);
@@ -210,12 +210,12 @@ export default function AssetsPage() {
       const res = await api.deleteCompany(companyDeleteTarget.id, companyDeleteAssets);
       const msg =
         companyDeleteAssets && res.assets_deleted > 0
-          ? `已删除企业，同时删除 ${res.assets_deleted} 条资产`
-          : "已删除企业";
+          ? `企業を削除し、同時に資産を ${res.assets_deleted} 件削除しました`
+          : "企業を削除しました";
       toast.success(msg);
       refresh();
     } catch (e) {
-      toast.error("删除失败：" + String((e as Error)?.message ?? e));
+      toast.error("削除に失敗しました：" + String((e as Error)?.message ?? e));
     } finally {
       setCompanyDeleting(false);
       setCompanyDeleteTarget(null);
@@ -227,8 +227,8 @@ export default function AssetsPage() {
     loadMeta();
   }, [loadMeta]);
 
-  // Reset query + page + selection when switching tabs
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tab changes intentionally reset tab-local controls.
+  // タブ切り替え時にクエリ + ページ + 選択をリセットする
+  // biome-ignore lint/correctness/useExhaustiveDependencies: タブ変更時はタブ固有のコントロールを意図的にリセットする。
   React.useEffect(() => {
     setQuery("");
     setDslError("");
@@ -239,13 +239,13 @@ export default function AssetsPage() {
     setLoaded(false);
   }, [tab]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: these controls intentionally reset server pagination.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: これらのコントロールは意図的にサーバー側のページ送りをリセットする。
   React.useEffect(() => setPage(0), [tab, size, query]);
 
   const dslMode = query.trim() !== "";
 
-  // Server-side paginated page loader for the active data tab (company tab excluded).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an explicit manual-reload trigger.
+  // アクティブなデータタブ(企業タブを除く)用のサーバー側ページネーションローダー。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey は明示的な手動再読み込みのトリガー。
   React.useEffect(() => {
     if (tab === "company") return;
     const request = ++assetsRequestRef.current;
@@ -297,7 +297,7 @@ export default function AssetsPage() {
   const tabCounts: Record<string, number> = { ...counts, company: companies.length };
   const totalAssets = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  // rows are already the current server-side page.
+  // rows は既に現在のサーバー側ページの内容。
   const tabData = (type: string): Asset[] => (rowsTab === type ? rows : []);
   const currentRows = tabData(tab);
   const slice = <T,>(list: T[]) => list;
@@ -316,19 +316,19 @@ export default function AssetsPage() {
     <div className="flex h-[calc(100vh-6rem)] min-h-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">资产</h1>
+          <h1 className="text-xl font-semibold tracking-tight">資産</h1>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">
-            共 <span className="tabular-nums">{totalAssets}</span> 项资产
+            合計 <span className="tabular-nums">{totalAssets}</span> 件の資産
           </span>
           {selected.size > 0 && (
             <Button variant="destructive" size="sm" onClick={() => openDelete(Array.from(selected) as number[])}>
-              <Trash2Icon className="size-3.5" /> 删除已选 ({selected.size})
+              <Trash2Icon className="size-3.5" /> 選択した {selected.size} 件を削除
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-            <RefreshCwIcon className={cn("size-4", loading && "animate-spin")} /> 刷新
+            <RefreshCwIcon className={cn("size-4", loading && "animate-spin")} /> 更新
           </Button>
           <CompanyDialog onSaved={refresh} />
         </div>
@@ -347,16 +347,16 @@ export default function AssetsPage() {
           </TabsList>
         </div>
 
-        {/* 企业 */}
+        {/* 企業 */}
         <TabsContent value="company" className="mt-0 flex min-h-0 flex-1 flex-col">
           <Card className="flex min-h-0 flex-1 flex-col overflow-hidden py-0">
             <div className="min-h-0 flex-1 overflow-auto">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
-                    <TableHead>企业</TableHead>
-                    <TableHead className="w-24 text-right">资产数</TableHead>
-                    <TableHead>资产范围</TableHead>
+                    <TableHead>企業</TableHead>
+                    <TableHead className="w-24 text-right">資産数</TableHead>
+                    <TableHead>資産範囲</TableHead>
                     <TableHead className="w-36 text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -380,7 +380,7 @@ export default function AssetsPage() {
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">未设置范围</span>
+                          <span className="text-xs text-muted-foreground">範囲が未設定</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -395,7 +395,7 @@ export default function AssetsPage() {
                               setCompanyDeleteTarget(c);
                               setCompanyDeleteAssets(false);
                             }}
-                            aria-label={`删除企业 ${c.name}`}
+                            aria-label={`企業 ${c.name} を削除`}
                           >
                             <Trash2Icon className="size-3.5" />
                           </Button>
@@ -406,7 +406,7 @@ export default function AssetsPage() {
                   {companies.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
-                        还没有企业。点击右上角「新增企业」并填写资产范围，系统会自动认领命中的资产。
+                        企業はまだありません。右上の「企業を追加」をクリックして資産範囲を入力すると、一致した資産が自動的に紐付けられます。
                       </TableCell>
                     </TableRow>
                   )}
@@ -416,11 +416,11 @@ export default function AssetsPage() {
           </Card>
         </TabsContent>
 
-        {/* 根域名 */}
+        {/* ルートドメイン */}
         <TabsContent value="root_domain" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "域名", "ICP 备案", "归属企业", ""]}
+            cols={["", "ドメイン", "ICP 登録", "所属企業", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -439,7 +439,7 @@ export default function AssetsPage() {
                 <TableCell className="font-mono text-xs font-medium">{a.domain}</TableCell>
                 <TableCell className="text-xs">{a.icp || "—"}</TableCell>
                 <TableCell className="text-xs">
-                  {companyName(a.company_id) || <span className="text-muted-foreground">未归属</span>}
+                  {companyName(a.company_id) || <span className="text-muted-foreground">未所属</span>}
                 </TableCell>
                 <TableCell className="w-8 pl-0">
                   <Button
@@ -447,7 +447,7 @@ export default function AssetsPage() {
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => openDelete([a.id])}
-                    aria-label={`删除资产 ${a.domain || a.id}`}
+                    aria-label={`資産 ${a.domain || a.id} を削除`}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -461,7 +461,7 @@ export default function AssetsPage() {
         <TabsContent value="ip" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "IP", "C段", "绑定域名", "开放端口", ""]}
+            cols={["", "IP", "C セグメント", "紐付けドメイン", "開放ポート", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -494,7 +494,7 @@ export default function AssetsPage() {
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => openDelete([a.id])}
-                    aria-label={`删除资产 ${a.ip || a.id}`}
+                    aria-label={`資産 ${a.ip || a.id} を削除`}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -504,11 +504,11 @@ export default function AssetsPage() {
           </AssetCard>
         </TabsContent>
 
-        {/* 子域名 */}
+        {/* サブドメイン */}
         <TabsContent value="subdomain" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "域名", "根域名", "解析类型", "解析值", ""]}
+            cols={["", "ドメイン", "ルートドメイン", "レコード種別", "レコード値", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -536,7 +536,7 @@ export default function AssetsPage() {
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => openDelete([a.id])}
-                    aria-label={`删除资产 ${a.domain || a.id}`}
+                    aria-label={`資産 ${a.domain || a.id} を削除`}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -546,11 +546,11 @@ export default function AssetsPage() {
           </AssetCard>
         </TabsContent>
 
-        {/* 应用 */}
+        {/* アプリ */}
         <TabsContent value="app" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "应用名", "Bundle ID", "分类", "ICP 备案", ""]}
+            cols={["", "アプリ名", "Bundle ID", "カテゴリ", "ICP 登録", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -576,7 +576,7 @@ export default function AssetsPage() {
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => openDelete([a.id])}
-                    aria-label={`删除资产 ${a.app_name || a.id}`}
+                    aria-label={`資産 ${a.app_name || a.id} を削除`}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -586,11 +586,22 @@ export default function AssetsPage() {
           </AssetCard>
         </TabsContent>
 
-        {/* 服务 */}
+        {/* サービス */}
         <TabsContent value="service" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "服务", "域名", "IP", "端口", "状态码", "标题", "指纹", "认证", ""]}
+            cols={[
+              "",
+              "サービス",
+              "ドメイン",
+              "IP",
+              "ポート",
+              "ステータスコード",
+              "タイトル",
+              "フィンガープリント",
+              "認証",
+              "",
+            ]}
             loaded={loaded}
             total={total}
             page={page}
@@ -655,7 +666,7 @@ export default function AssetsPage() {
                     ) : (
                       (a.auth ?? []).map((authItem, i) => {
                         const item = authItem as Record<string, string>;
-                        const label = item.type || item.username || "认证";
+                        const label = item.type || item.username || "認証";
                         return (
                           <span key={i} className="inline-flex items-center gap-1 text-[11px]">
                             <KeyRoundIcon className="size-3 text-muted-foreground" />
@@ -671,7 +682,7 @@ export default function AssetsPage() {
                       size="icon"
                       className="size-7 text-muted-foreground hover:text-destructive"
                       onClick={() => openDelete([a.id])}
-                      aria-label={`删除资产 ${a.url || a.id}`}
+                      aria-label={`資産 ${a.url || a.id} を削除`}
                     >
                       <Trash2Icon className="size-3.5" />
                     </Button>
@@ -682,11 +693,11 @@ export default function AssetsPage() {
           </AssetCard>
         </TabsContent>
 
-        {/* 接口 */}
+        {/* エンドポイント */}
         <TabsContent value="endpoint" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "方法", "完整地址", "参数", ""]}
+            cols={["", "メソッド", "完全な URL", "パラメータ", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -723,7 +734,7 @@ export default function AssetsPage() {
                     size="icon"
                     className="size-7 text-muted-foreground hover:text-destructive"
                     onClick={() => openDelete([a.id])}
-                    aria-label={`删除资产 ${a.url || a.id}`}
+                    aria-label={`資産 ${a.url || a.id} を削除`}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -737,14 +748,14 @@ export default function AssetsPage() {
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogTitle>削除の確認</AlertDialogTitle>
             <AlertDialogDescription>
-              将永久删除 <span className="font-semibold tabular-nums">{deleteIds.length}</span>{" "}
-              条资产记录，此操作不可撤销。
+              <span className="font-semibold tabular-nums">{deleteIds.length}</span>{" "}
+              件の資産レコードを完全に削除します。この操作は元に戻せません。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>キャンセル</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
@@ -753,7 +764,7 @@ export default function AssetsPage() {
               disabled={deleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleting ? "删除中…" : "确认删除"}
+              {deleting ? "削除中…" : "削除する"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -770,10 +781,10 @@ export default function AssetsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除企业 · {companyDeleteTarget?.name}</AlertDialogTitle>
+            <AlertDialogTitle>企業を削除 · {companyDeleteTarget?.name}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
-                <p>此操作将永久删除该企业及其资产范围配置，不可撤销。</p>
+                <p>この操作で企業とその資産範囲設定が完全に削除されます。元に戻せません。</p>
                 <label
                   htmlFor="delete-assets-opt"
                   className="flex cursor-pointer items-center gap-2.5 rounded-md border p-3 hover:bg-muted/50"
@@ -784,15 +795,17 @@ export default function AssetsPage() {
                     onCheckedChange={(v) => setCompanyDeleteAssets(!!v)}
                   />
                   <span className="text-sm leading-snug">
-                    同时删除该企业下的所有资产
-                    <span className="block text-xs text-muted-foreground">不勾选则保留资产，仅取消归属关系</span>
+                    この企業に属するすべての資産も同時に削除
+                    <span className="block text-xs text-muted-foreground">
+                      チェックしない場合は資産を保持し、所属関係のみ解除します
+                    </span>
                   </span>
                 </label>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={companyDeleting}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={companyDeleting}>キャンセル</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
@@ -801,7 +814,7 @@ export default function AssetsPage() {
               disabled={companyDeleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {companyDeleting ? "删除中…" : "确认删除"}
+              {companyDeleting ? "削除中…" : "削除する"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -870,7 +883,7 @@ function AssetCard({
             ) : (
               <TableRow>
                 <TableCell colSpan={cols.length} className="py-12 text-center text-sm text-muted-foreground">
-                  {loaded ? "暂无数据。" : "加载中…"}
+                  {loaded ? "データがありません。" : "読み込み中…"}
                 </TableCell>
               </TableRow>
             )}
@@ -887,7 +900,7 @@ function AssetCard({
               <SelectGroup>
                 {PAGE_SIZES.map((n) => (
                   <SelectItem key={n} value={String(n)}>
-                    {n} / 页
+                    {n} / ページ
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -951,8 +964,9 @@ function CompanyAvatar({ name, logo }: { name: string; logo?: string }) {
   );
 }
 
-// 后端返回的 warnings 说的是既有数据问题（不是本次提交的行有错），保存本身已经
-// 成功。给更长的停留时间，因为它需要用户去处理具体的资产，扫一眼标题不够。
+// バックエンドが返す warnings は既存データの問題(今回の送信行の誤りではない)であり、保存自体は
+// 既に成功している。ユーザーが具体的な資産を処理する必要があるため、タイトルを一瞥するだけでは
+// 足りず、表示時間を長めに取る。
 function showScopeWarnings(warnings?: string[]) {
   for (const warning of warnings ?? []) {
     toast.warning(warning, { duration: 15000 });
@@ -971,7 +985,7 @@ function savedScopeText(company: Company): string {
     .join("\n");
 }
 
-// 新增企业使用与任务、LLM 编辑一致的右侧抽屉。
+// 企業の追加には、タスクや LLM の編集と揃えた右側ドロワーを使う。
 function CompanyDialog({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
@@ -987,11 +1001,11 @@ function CompanyDialog({ onSaved }: { onSaved: () => void }) {
 
   const submit = async () => {
     if (!name.trim()) {
-      toast.error("请填写企业名称");
+      toast.error("企業名を入力してください");
       return;
     }
     if (parsedScope.errors.length > 0) {
-      toast.error("请修正无效的资产范围");
+      toast.error("無効な資産範囲を修正してください");
       return;
     }
     setBusy(true);
@@ -999,14 +1013,14 @@ function CompanyDialog({ onSaved }: { onSaved: () => void }) {
       const res = await api.createCompany(name.trim(), parsedScope.rules);
       const added = res.scope_added ?? 0;
       const invalid = res.scope_invalid ?? 0;
-      if (invalid > 0) toast.warning(`已创建企业，添加 ${added} 条范围；${invalid} 行无效`);
-      else toast.success(`已创建企业，添加 ${added} 条范围`);
+      if (invalid > 0) toast.warning(`企業を作成し、範囲を ${added} 件追加しました。${invalid} 行が無効です`);
+      else toast.success(`企業を作成し、範囲を ${added} 件追加しました`);
       setOpen(false);
       onSaved();
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
-      if (/:\s*409$/.test(msg)) toast.error("企业已存在，请换个名称");
-      else toast.error(`保存失败：${msg}`);
+      if (/:\s*409$/.test(msg)) toast.error("企業は既に存在します。別の名前を付けてください");
+      else toast.error(`保存に失敗しました：${msg}`);
     } finally {
       setBusy(false);
     }
@@ -1016,21 +1030,24 @@ function CompanyDialog({ onSaved }: { onSaved: () => void }) {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <Button size="sm">
-          <BuildingIcon data-icon="inline-start" /> 新增企业
+          <BuildingIcon data-icon="inline-start" /> 企業を追加
         </Button>
       </SheetTrigger>
       <SheetContent className="w-full! max-w-none! gap-0 p-0 sm:w-[520px]! sm:max-w-[520px]!">
         <SheetHeader className="border-b p-6">
-          <SheetTitle>新增企业</SheetTitle>
-          <SheetDescription>配置企业及其资产范围。关键词只作为 Agent 提示，不会自动归属资产。</SheetDescription>
+          <SheetTitle>企業を追加</SheetTitle>
+          <SheetDescription>
+            企業とその資産範囲を設定します。キーワードは Agent
+            へのヒントにすぎず、資産が自動的に帰属することはありません。
+          </SheetDescription>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto p-6">
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="cn-name">企业名称</FieldLabel>
+              <FieldLabel htmlFor="cn-name">企業名</FieldLabel>
               <Input
                 id="cn-name"
-                placeholder="如 Acme Corp（名称唯一）"
+                placeholder="例:Acme Corp（名前は一意）"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -1040,7 +1057,7 @@ function CompanyDialog({ onSaved }: { onSaved: () => void }) {
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t p-4">
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-            取消
+            キャンセル
           </Button>
           <Button onClick={submit} disabled={busy || !name.trim() || parsedScope.errors.length > 0}>
             {busy ? "保存中…" : "保存"}
@@ -1051,7 +1068,7 @@ function CompanyDialog({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-// 编辑（覆盖）资产范围弹窗
+// 資産範囲を編集(上書き)するダイアログ
 function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [scopeText, setScopeText] = React.useState("");
@@ -1071,20 +1088,20 @@ function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () =
 
   const submit = async () => {
     if (parsedScope.errors.length > 0) {
-      toast.error("请修正无效的资产范围");
+      toast.error("無効な資産範囲を修正してください");
       return;
     }
     setBusy(true);
     try {
       const res = await api.updateCompanyScope(company.id, parsedScope.rules, reason);
       const errCount = res.invalid ?? 0;
-      if (errCount > 0) toast.warning(`已保存；${errCount} 行无效`);
-      else toast.success(`范围已更新，共 ${res.added} 条`);
+      if (errCount > 0) toast.warning(`保存しました。${errCount} 行が無効です`);
+      else toast.success(`範囲を更新しました。合計 ${res.added} 件`);
       showScopeWarnings(res.warnings);
       setOpen(false);
       onSaved();
     } catch (e) {
-      toast.error(`保存失败：${String((e as Error)?.message ?? e)}`);
+      toast.error(`保存に失敗しました：${String((e as Error)?.message ?? e)}`);
     } finally {
       setBusy(false);
     }
@@ -1094,14 +1111,15 @@ function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () =
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="h-7">
-          编辑
+          編集
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>编辑资产范围 · {company.name}</DialogTitle>
+          <DialogTitle>資産範囲を編集 · {company.name}</DialogTitle>
           <DialogDescription>
-            编辑后将替换全部现有范围。ICP 精确匹配资产，企业关键词仅作为 Agent 提示。
+            編集すると既存の範囲がすべて置き換わります。ICP は資産に完全一致し、企業キーワードは Agent
+            へのヒントにすぎません。
           </DialogDescription>
         </DialogHeader>
         <FieldGroup className="py-2">
@@ -1112,10 +1130,10 @@ function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () =
             parsed={parsedScope}
           />
           <Field>
-            <FieldLabel htmlFor="es-reason">归属依据（可选）</FieldLabel>
+            <FieldLabel htmlFor="es-reason">帰属の根拠（任意）</FieldLabel>
             <Input
               id="es-reason"
-              placeholder="如 证书 / whois / ASN 佐证"
+              placeholder="例:証明書 / whois / ASN による裏付け"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -1123,10 +1141,10 @@ function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () =
         </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-            取消
+            キャンセル
           </Button>
           <Button onClick={submit} disabled={busy || parsedScope.errors.length > 0}>
-            {busy ? "保存中…" : "覆盖保存"}
+            {busy ? "保存中…" : "上書き保存"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1134,7 +1152,7 @@ function EditScopeDialog({ company, onSaved }: { company: Company; onSaved: () =
   );
 }
 
-// 追加资产范围弹窗
+// 資産範囲を追加するダイアログ
 function AppendScopeDialog({ company, onSaved }: { company: Company; onSaved: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [scopeText, setScopeText] = React.useState("");
@@ -1150,24 +1168,24 @@ function AppendScopeDialog({ company, onSaved }: { company: Company; onSaved: ()
 
   const submit = async () => {
     if (parsedScope.rules.length === 0) {
-      toast.error("请填写要追加的范围");
+      toast.error("追加する範囲を入力してください");
       return;
     }
     if (parsedScope.errors.length > 0) {
-      toast.error("请修正无效的资产范围");
+      toast.error("無効な資産範囲を修正してください");
       return;
     }
     setBusy(true);
     try {
       const res = await api.addCompanyScope(company.id, parsedScope.rules, reason);
       const errCount = res.invalid ?? 0;
-      if (errCount > 0) toast.warning(`已保存；${errCount} 行无效`);
-      else toast.success(`已追加 ${res.added} 条范围`);
+      if (errCount > 0) toast.warning(`保存しました。${errCount} 行が無効です`);
+      else toast.success(`範囲を ${res.added} 件追加しました`);
       showScopeWarnings(res.warnings);
       setOpen(false);
       onSaved();
     } catch (e) {
-      toast.error(`保存失败：${String((e as Error)?.message ?? e)}`);
+      toast.error(`保存に失敗しました：${String((e as Error)?.message ?? e)}`);
     } finally {
       setBusy(false);
     }
@@ -1182,8 +1200,11 @@ function AppendScopeDialog({ company, onSaved }: { company: Company; onSaved: ()
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>追加资产范围 · {company.name}</DialogTitle>
-          <DialogDescription>新范围会追加到现有范围。ICP 精确匹配资产，企业关键词仅作为 Agent 提示。</DialogDescription>
+          <DialogTitle>資産範囲を追加 · {company.name}</DialogTitle>
+          <DialogDescription>
+            新しい範囲は既存の範囲に追加されます。ICP は資産に完全一致し、企業キーワードは Agent
+            へのヒントにすぎません。
+          </DialogDescription>
         </DialogHeader>
         <FieldGroup className="py-2">
           <ScopeTextEditor
@@ -1193,10 +1214,10 @@ function AppendScopeDialog({ company, onSaved }: { company: Company; onSaved: ()
             parsed={parsedScope}
           />
           <Field>
-            <FieldLabel htmlFor="as-reason">归属依据（可选）</FieldLabel>
+            <FieldLabel htmlFor="as-reason">帰属の根拠（任意）</FieldLabel>
             <Input
               id="as-reason"
-              placeholder="如 证书 / whois / ASN 佐证"
+              placeholder="例:証明書 / whois / ASN による裏付け"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -1204,7 +1225,7 @@ function AppendScopeDialog({ company, onSaved }: { company: Company; onSaved: ()
         </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-            取消
+            キャンセル
           </Button>
           <Button onClick={submit} disabled={busy || parsedScope.rules.length === 0 || parsedScope.errors.length > 0}>
             {busy ? "保存中…" : "追加"}

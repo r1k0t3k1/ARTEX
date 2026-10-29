@@ -8,14 +8,50 @@ import { MOCK } from "@/lib/mock/enabled";
 import type { LogLine } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// Mock demo：无后端 SSE，塞几行示例日志。
+// Mock デモ：バックエンド SSE がない場合に数行のサンプルログを入れておく。
 const MOCK_LOGS: LogLine[] = [
-  { seq: 1, ts: "2026-07-26T03:55:00Z", level: "info", tag: "engine", text: "ARTEX v0.1.0 backend listening on :8787 (workers=3)" },
-  { seq: 2, ts: "2026-07-26T03:55:01Z", level: "info", tag: "config", text: "LLM configured from DB: anthropic / claude-opus-4-8" },
-  { seq: 3, ts: "2026-07-26T03:56:10Z", level: "info", tag: "planner", text: "task t-acme-web: 第 3 轮规划，生成意图 i-4" },
-  { seq: 4, ts: "2026-07-26T03:57:00Z", level: "warn", tag: "guard", text: "block bash: 目标越界 out.evil.example 不在 scope 内" },
-  { seq: 5, ts: "2026-07-26T03:57:30Z", level: "info", tag: "work#1", text: "report_finding: Default Credentials (high) 已落库" },
-  { seq: 6, ts: "2026-07-26T03:58:20Z", level: "error", tag: "work#3", text: "intercept: mysqldump 命中破坏性规则，等待人工审批" },
+  {
+    seq: 1,
+    ts: "2026-07-26T03:55:00Z",
+    level: "info",
+    tag: "engine",
+    text: "ARTEX v0.1.0 backend listening on :8787 (workers=3)",
+  },
+  {
+    seq: 2,
+    ts: "2026-07-26T03:55:01Z",
+    level: "info",
+    tag: "config",
+    text: "LLM configured from DB: anthropic / claude-opus-4-8",
+  },
+  {
+    seq: 3,
+    ts: "2026-07-26T03:56:10Z",
+    level: "info",
+    tag: "planner",
+    text: "task t-acme-web: 第 3 ラウンドの計画で意図 i-4 を生成",
+  },
+  {
+    seq: 4,
+    ts: "2026-07-26T03:57:00Z",
+    level: "warn",
+    tag: "guard",
+    text: "block bash: ターゲット越境 out.evil.example は scope 外",
+  },
+  {
+    seq: 5,
+    ts: "2026-07-26T03:57:30Z",
+    level: "info",
+    tag: "work#1",
+    text: "report_finding: Default Credentials (high) を DB に保存",
+  },
+  {
+    seq: 6,
+    ts: "2026-07-26T03:58:20Z",
+    level: "error",
+    tag: "work#3",
+    text: "intercept: mysqldump が破壊的ルールに一致、手動承認待ち",
+  },
 ];
 
 const levelTone: Record<LogLine["level"], string> = {
@@ -48,7 +84,7 @@ export default function LogsPage() {
   const pausedRef = React.useRef(false);
   pausedRef.current = paused;
 
-  // Minimum db_id seen — used as the cursor for loading older history.
+  // 観測した最小 db_id — 古い履歴を読み込むためのカーソルとして使う。
   const minDbId = React.useMemo(() => {
     let min = 0;
     for (const l of lines) {
@@ -57,8 +93,8 @@ export default function LogsPage() {
     return min;
   }, [lines]);
 
-  // Live tail via SSE. on connect, replays whatever is in the ring (includes
-  // DB-restored history from the last 100 rows written before restart).
+  // SSE によるライブテール。接続時にリングバッファの内容を再生する
+  // （再起動前に書き込まれた直近 100 行の DB 復元履歴を含む）。
   React.useEffect(() => {
     if (MOCK) {
       setLines(MOCK_LOGS);
@@ -71,13 +107,13 @@ export default function LogsPage() {
         const l = JSON.parse(e.data) as LogLine;
         setLines((prev) => (prev.some((x) => x.seq === l.seq) ? prev : [...prev, l].slice(-3000)));
       } catch {
-        /* ignore malformed frame */
+        /* 不正なフレームは無視する */
       }
     };
     return () => es.close();
   }, []);
 
-  // Mark "has more" once we have any db_id in view.
+  // 表示中に db_id が 1 つでもあれば「さらに読み込み可能」とする。
   React.useEffect(() => {
     if (minDbId > 1) setHasMore(true);
   }, [minDbId]);
@@ -89,16 +125,16 @@ export default function LogsPage() {
       const params = minDbId > 0 ? `?before=${minDbId}&limit=200` : `?limit=200`;
       const res = await fetch(`/api/logs/history${params}`);
       if (!res.ok) return;
-      const data = await res.json() as { items: LogLine[]; has_more: boolean };
+      const data = (await res.json()) as { items: LogLine[]; has_more: boolean };
       if (data.items?.length) {
-        // Assign synthetic seq numbers below current minimum to keep dedup working.
+        // 重複排除が機能し続けるよう、現在の最小値未満の合成 seq 番号を割り当てる。
         setLines((prev) => {
           const minSeq = prev.reduce((m, l) => Math.min(m, l.seq ?? 0), 0);
           const older = data.items.map((l, i) => ({
             ...l,
             seq: minSeq - data.items.length + i,
           }));
-          // Prepend, dedup by db_id, cap at 5000.
+          // 先頭に追加し、db_id で重複排除して 5000 件に制限。
           const merged = [...older, ...prev];
           const seen = new Set<number>();
           const deduped = merged.filter((l) => {
@@ -142,13 +178,15 @@ export default function LogsPage() {
   return (
     <div className="flex flex-1 flex-col gap-3">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">系统日志</h1>
-        <p className="text-muted-foreground text-sm">后端实时日志流(planner / worker / 数据库 / 流量 …)</p>
+        <h1 className="text-xl font-semibold tracking-tight">システムログ</h1>
+        <p className="text-muted-foreground text-sm">
+          バックエンドのリアルタイムログストリーム（planner / worker / データベース / トラフィック …）
+        </p>
       </div>
       <div className="flex flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Input
-            placeholder="过滤(文本 / tag)…"
+            placeholder="フィルタ（テキスト / tag）…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="h-8 max-w-xs"
@@ -162,7 +200,7 @@ export default function LogsPage() {
                 className="h-8"
                 onClick={() => setLevel(lv)}
               >
-                {lv === "all" ? "全部" : lv}
+                {lv === "all" ? "すべて" : lv}
               </Button>
             ))}
           </div>
@@ -172,15 +210,14 @@ export default function LogsPage() {
             className="h-8"
             onClick={() => setPaused((p) => !p)}
           >
-            {paused ? "已暂停" : "暂停"}
+            {paused ? "一時停止中" : "一時停止"}
           </Button>
           <Button size="sm" variant="outline" className="h-8" onClick={() => setLines([])}>
-            清空
+            クリア
           </Button>
           <span className="ml-auto text-xs text-muted-foreground">
-            {counts.total} 行 ·{" "}
-            <span className="text-amber-600 dark:text-amber-400">{counts.warn} 警告</span> ·{" "}
-            <span className="text-red-600 dark:text-red-400">{counts.error} 错误</span>
+            {counts.total} 行 · <span className="text-amber-600 dark:text-amber-400">{counts.warn} 警告</span> ·{" "}
+            <span className="text-red-600 dark:text-red-400">{counts.error} エラー</span>
           </span>
         </div>
 
@@ -200,18 +237,16 @@ export default function LogsPage() {
                 disabled={loadingHistory}
                 onClick={loadOlderHistory}
               >
-                {loadingHistory ? "加载中…" : "加载更早日志"}
+                {loadingHistory ? "読み込み中…" : "以前のログを読み込む"}
               </Button>
             </div>
           )}
           {filtered.length === 0 ? (
-            <p className="py-10 text-center text-muted-foreground">暂无日志。</p>
+            <p className="py-10 text-center text-muted-foreground">ログがありません。</p>
           ) : (
             filtered.map((l) => {
               const body =
-                l.tag && l.text.startsWith("[" + l.tag + "]")
-                  ? l.text.slice(l.tag.length + 2).trimStart()
-                  : l.text;
+                l.tag && l.text.startsWith("[" + l.tag + "]") ? l.text.slice(l.tag.length + 2).trimStart() : l.text;
               return (
                 <div key={l.seq} className="flex items-start gap-2 px-1 py-0.5 hover:bg-muted/40">
                   <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", levelDot[l.level])} />

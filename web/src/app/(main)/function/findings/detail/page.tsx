@@ -44,7 +44,7 @@ function fmtTime(ts: string) {
   return new Date(ts).toLocaleString("zh-CN");
 }
 
-// FieldRow is one label/value line in the right-hand status panel.
+// FieldRow は右側ステータスパネルの 1 行のラベル/値。
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-3 py-2.5">
@@ -85,10 +85,10 @@ function FindingDetailInner() {
       try {
         const updated = await api.setFindingSeverity(id, next);
         setFinding(updated);
-        toast.success(`严重等级已改为「${statusMeta("severity", next).label}」`);
+        toast.success(`深刻度を「${statusMeta("severity", next).label}」に変更しました`);
       } catch (e) {
         setFinding((cur) => (cur ? { ...cur, severity: prev } : cur));
-        toast.error("更新失败：" + (e as Error).message);
+        toast.error("更新に失敗しました：" + (e as Error).message);
       }
     },
     [finding, id],
@@ -102,10 +102,10 @@ function FindingDetailInner() {
       try {
         const updated = await api.setFindingStatus(id, next);
         setFinding(updated);
-        toast.success(`处理状态已改为「${statusMeta("finding", next).label}」`);
+        toast.success(`処置ステータスを「${statusMeta("finding", next).label}」に変更しました`);
       } catch (e) {
         setFinding((cur) => (cur ? { ...cur, status: prev } : cur));
-        toast.error("更新失败：" + (e as Error).message);
+        toast.error("更新に失敗しました：" + (e as Error).message);
       }
     },
     [finding, id],
@@ -114,11 +114,11 @@ function FindingDetailInner() {
   if (!finding) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
-        <p className="text-muted-foreground">{loaded ? `未找到发现 ${id}` : "加载中…"}</p>
+        <p className="text-muted-foreground">{loaded ? `検出結果 ${id} が見つかりません` : "読み込み中…"}</p>
         {loaded && (
           <Button asChild variant="outline">
             <Link href="/function/findings">
-              <ArrowLeftIcon /> 返回发现列表
+              <ArrowLeftIcon /> 検出結果リストに戻る
             </Link>
           </Button>
         )}
@@ -126,11 +126,11 @@ function FindingDetailInner() {
     );
   }
 
-  const title = finding.name || finding.vulnclass || "未分类";
+  const title = finding.name || finding.vulnclass || "未分類";
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-0">
-      {/* Sticky header */}
+      {/* 固定ヘッダー */}
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <SidebarTrigger className="-ml-1" />
@@ -148,34 +148,34 @@ function FindingDetailInner() {
           <StatusBadge domain="severity" value={finding.severity} dot />
           <StatusBadge domain="finding" value={finding.status} dot />
           {finding.inherited && finding.source_task_id && (
-            <Badge variant="outline">来源任务 #{finding.source_task_id} · 只读</Badge>
+            <Badge variant="outline">ソースタスク #{finding.source_task_id} · 読み取り専用</Badge>
           )}
         </div>
         <TabsList>
-          <TabsTrigger value="overview">概览</TabsTrigger>
-          <TabsTrigger value="lineage">链路图</TabsTrigger>
+          <TabsTrigger value="overview">概要</TabsTrigger>
+          <TabsTrigger value="lineage">リンクグラフ</TabsTrigger>
         </TabsList>
       </header>
 
-      {/* Tab content */}
+      {/* タブ内容 */}
       <div className="flex-1 p-4 lg:p-6">
-        {/* 概览：左（摘要 + 证据）/ 右（状态区） */}
+        {/* 概要：左（サマリー + 証拠）/ 右（ステータス領域） */}
         <TabsContent value="overview" className="mt-0">
           <div className="grid gap-4 lg:grid-cols-3">
-            {/* 左栏 */}
+            {/* 左カラム */}
             <div className="flex flex-col gap-4 lg:col-span-2">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm">摘要</CardTitle>
+                  <CardTitle className="text-sm">サマリー</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{finding.summary || "（无摘要）"}</p>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{finding.summary || "（サマリーなし）"}</p>
                 </CardContent>
               </Card>
               <FindingRetestPanel key={id} findingId={id} readOnly={finding.inherited} onCompleted={load} />
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm">证据 / PoC</CardTitle>
+                  <CardTitle className="text-sm">証拠 / PoC</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {finding.evidence ? (
@@ -183,7 +183,7 @@ function FindingDetailInner() {
                       {finding.evidence}
                     </pre>
                   ) : (
-                    <p className="text-sm text-muted-foreground">（无证据）</p>
+                    <p className="text-sm text-muted-foreground">（証拠なし）</p>
                   )}
                 </CardContent>
               </Card>
@@ -194,42 +194,44 @@ function FindingDetailInner() {
                 readOnly={finding.inherited}
                 onChanged={load}
               />
-              {/* 证据下方：详细报告(Markdown 渲染) */}
+              {/* 証拠の下：詳細レポート(Markdown レンダリング) */}
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
-                  <CardTitle className="text-sm">详细报告</CardTitle>
-                  {finding.report && <CopyButton text={finding.report} successMessage="已复制详细报告" />}
+                  <CardTitle className="text-sm">詳細レポート</CardTitle>
+                  {finding.report && <CopyButton text={finding.report} successMessage="詳細レポートをコピーしました" />}
                 </CardHeader>
                 <CardContent>
                   {finding.report_stale ? (
                     <Alert>
-                      <AlertDescription>流量证据已变更，详细报告待更新。</AlertDescription>
+                      <AlertDescription>
+                        トラフィック証拠が変更されたため、詳細レポートの更新待ちです。
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                   {finding.report ? (
                     <Markdown text={finding.report} />
                   ) : (
-                    <p className="text-sm text-muted-foreground">暂无详细报告。</p>
+                    <p className="text-sm text-muted-foreground">詳細レポートはまだありません。</p>
                   )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* 右栏：状态区 */}
+            {/* 右カラム：ステータス領域 */}
             <Card className="h-fit lg:sticky lg:top-24">
               <CardHeader>
-                <CardTitle className="text-sm">状态</CardTitle>
+                <CardTitle className="text-sm">ステータス</CardTitle>
               </CardHeader>
               <CardContent className="divide-y">
-                {/* 漏洞 ID */}
-                <FieldRow label="漏洞 ID">
+                {/* 脆弱性 ID */}
+                <FieldRow label="脆弱性 ID">
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                     #{finding.id}
                   </code>
                 </FieldRow>
 
-                {/* 严重等级 */}
-                <FieldRow label="严重等级">
+                {/* 深刻度 */}
+                <FieldRow label="深刻度">
                   {finding.inherited ? (
                     <StatusBadge domain="severity" value={finding.severity} dot />
                   ) : (
@@ -250,8 +252,8 @@ function FindingDetailInner() {
                   )}
                 </FieldRow>
 
-                {/* 处理状态 */}
-                <FieldRow label="处理状态">
+                {/* 処置ステータス */}
+                <FieldRow label="処置ステータス">
                   {finding.inherited ? (
                     <StatusBadge domain="finding" value={finding.status} dot />
                   ) : (
@@ -272,8 +274,8 @@ function FindingDetailInner() {
                   )}
                 </FieldRow>
 
-                {/* 漏洞类型 */}
-                <FieldRow label="漏洞类型">
+                {/* 脆弱性タイプ */}
+                <FieldRow label="脆弱性タイプ">
                   {finding.vulnclass ? (
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{finding.vulnclass}</code>
                   ) : (
@@ -281,8 +283,8 @@ function FindingDetailInner() {
                   )}
                 </FieldRow>
 
-                {/* 涉及资产 */}
-                <FieldRow label="涉及资产">
+                {/* 関連資産 */}
+                <FieldRow label="関連資産">
                   {finding.assets && finding.assets.length > 0 ? (
                     <div className="flex flex-wrap justify-end gap-1">
                       {finding.assets.map((a) => (
@@ -300,8 +302,8 @@ function FindingDetailInner() {
                   )}
                 </FieldRow>
 
-                {/* 所属任务 */}
-                <FieldRow label="所属任务">
+                {/* 所属タスク */}
+                <FieldRow label="所属タスク">
                   {finding.task_id ? (
                     <Link
                       href={`/function/tasks/detail?id=${finding.task_id}`}
@@ -312,12 +314,12 @@ function FindingDetailInner() {
                       <ArrowUpRightIcon className="size-3 shrink-0" />
                     </Link>
                   ) : (
-                    <span className="text-muted-foreground">—（任务已删除）</span>
+                    <span className="text-muted-foreground">—（タスク削除済み）</span>
                   )}
                 </FieldRow>
 
-                {/* 发现时间 */}
-                <FieldRow label="发现时间">
+                {/* 検出時刻 */}
+                <FieldRow label="検出時刻">
                   <span className="tabular-nums">{fmtTime(finding.ts)}</span>
                 </FieldRow>
               </CardContent>
@@ -325,7 +327,7 @@ function FindingDetailInner() {
           </div>
         </TabsContent>
 
-        {/* 链路图：从任务初始节点回溯到本漏洞节点的攻击链路 */}
+        {/* リンクグラフ：タスクの初期ノードからこの脆弱性ノードまでを遡る攻撃チェーン */}
         <TabsContent value="lineage" className="mt-0">
           <FindingLineageView findingId={finding.id} />
         </TabsContent>
@@ -334,7 +336,7 @@ function FindingDetailInner() {
   );
 }
 
-// useSearchParams must sit under a Suspense boundary for static export.
+// useSearchParams は静的エクスポートのため Suspense 境界の下に置く必要がある。
 export default function FindingDetailPage() {
   return (
     <React.Suspense fallback={null}>

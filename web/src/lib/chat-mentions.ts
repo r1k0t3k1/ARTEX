@@ -1,3 +1,5 @@
+// label（"漏洞" 等）と下記のメンション正規表現はバックエンドと互換なプロトコル表現のため、
+// 中国語のまま変更しないこと。表示用の翻訳を当てるとメンションの解析が壊れる。
 export const mentionKinds = [
   { kind: "finding", label: "漏洞", alias: "finding" },
   { kind: "asset", label: "资产", alias: "asset" },
@@ -43,6 +45,7 @@ export function mentionSearch(query: string) {
 }
 
 export function mentionToken(item: ChatMention) {
+  // フォールバックの "资产" はプロトコル値なので中国語のまま。
   const kind = mentionKinds.find((entry) => entry.kind === item.kind)?.label ?? "资产";
   const label = item.label
     .replace(/[[\]]/g, (char) => (char === "[" ? "（" : "）"))
@@ -52,6 +55,7 @@ export function mentionToken(item: ChatMention) {
 }
 
 export function selectedMentions(value: string) {
+  // この正規表現はバックエンドが出力するメンション記法（中国語）に合わせる必要があるため変更禁止。
   return [...value.matchAll(/@\[(漏洞|资产|企业|接口|IP|应用|域名|子域名|服务)#([0-9]+)(?: ([^\]\r\n]*))?\]/g)].map(
     (match) => ({
       token: match[0],

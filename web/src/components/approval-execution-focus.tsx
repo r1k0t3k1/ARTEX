@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type { Activity, InterceptExecution } from "@/lib/types";
 
-// Resolve one exact persisted call, independently of transcript pagination.
+// トランスクリプトのページネーションとは独立に、保存された1件の呼び出しを正確に解決する。
 export function useApprovalFocus({ taskId, conversationId }: { taskId?: string; conversationId?: number }) {
   const [state, setState] = React.useState<{
     id: number;
@@ -34,12 +34,12 @@ export function useApprovalFocus({ taskId, conversationId }: { taskId?: string; 
             ? source.conversation_id !== conversationId
             : source.task_id !== taskId || source.conversation_id != null
         ) {
-          throw new Error("审批来源与当前会话不一致");
+          throw new Error("承認の取得元が現在のセッションと一致しません");
         }
         setState({ id, source, loading: false });
       })
       .catch((e) => {
-        if (!cancelled) setState({ id, error: (e as Error).message || "无法定位原始执行", loading: false });
+        if (!cancelled) setState({ id, error: (e as Error).message || "元の実行を特定できません", loading: false });
       });
     return () => {
       cancelled = true;
@@ -56,8 +56,8 @@ export function useApprovalFocus({ taskId, conversationId }: { taskId?: string; 
 
 type HistoryPage = { items: Activity[]; hasMore: boolean };
 
-// Fill the existing transcript continuously back to the call, preserving all
-// intervening messages. Never splice an isolated call into a paginated history.
+// 既存のトランスクリプトを、その呼び出しまで途切れなく遡って埋める。途中のメッセージは
+// すべて保持する。隔離された呼び出しをページネーションされた履歴に差し込むことは決してしない。
 export function useApprovalHistory(
   source: InterceptExecution | undefined,
   loaded: boolean,
@@ -78,13 +78,13 @@ export function useApprovalHistory(
         const page = await loadPage(before);
         if (cancelled) return;
         if (!page.items.length || (before > 0 && page.items[0].seq >= before)) {
-          throw new Error("会话中未找到对应工具调用，记录可能已删除");
+          throw new Error("セッション内に対応するツール呼び出しが見つかりません。記録が削除された可能性があります");
         }
         mergePage(page);
         current = page.items;
         before = current[0].seq;
         if (!page.hasMore && !current.some((a) => a.seq === source.seq)) {
-          throw new Error("会话中未找到对应工具调用");
+          throw new Error("セッション内に対応するツール呼び出しが見つかりません");
         }
       }
       if (!cancelled) setResult({ source });
@@ -118,19 +118,19 @@ export function ApprovalExecutionFocus({
     >
       <span className={error ? "text-destructive" : "text-muted-foreground"}>
         {error
-          ? `无法定位：${error}`
+          ? `特定できません：${error}`
           : history.ready
-            ? `已展开审批 #${state.id} 对应的工具调用`
-            : `正在加载审批 #${state.id} 所在的对话位置…`}
+            ? `承認 #${state.id} に対応するツール呼び出しを展開しました`
+            : `承認 #${state.id} の会話位置を読み込み中…`}
       </span>
       <div className="flex gap-2">
         {error ? (
           <Button size="sm" variant="outline" onClick={focus.retry}>
-            重试定位
+            再度特定する
           </Button>
         ) : null}
         <Button size="sm" variant="ghost" onClick={focus.close}>
-          取消定位
+          特定をキャンセル
         </Button>
       </div>
     </div>

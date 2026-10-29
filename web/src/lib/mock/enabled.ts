@@ -1,3 +1,3 @@
-// Mock 开关。构建期注入的公开变量（NEXT_PUBLIC_ 前缀才在浏览器可读）。
-// Vercel 上设 NEXT_PUBLIC_MOCK=1 即整站走 mock、无需后端。
+// Mock スイッチ。ビルド時に注入される公開変数（NEXT_PUBLIC_ プレフィックスのみブラウザから読める）。
+// Vercel で NEXT_PUBLIC_MOCK=1 を設定するとサイト全体が mock で動作し、バックエンド不要になる。
 export const MOCK = process.env.NEXT_PUBLIC_MOCK === "1";

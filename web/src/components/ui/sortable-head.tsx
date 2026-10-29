@@ -7,10 +7,10 @@ import { TableHead } from "@/components/ui/table";
 import type { SortDirection } from "@/lib/sort-preference";
 import { cn } from "@/lib/utils";
 
-// SortableHead is a table header cell that toggles a column's sort on click.
-// It renders a neutral up/down glyph when inactive and a directional arrow when
-// its field is the active sort, mirroring the pattern first used on the tasks
-// table so sortable columns look and behave the same across the app.
+// SortableHead はクリックで列の並び順を切り替えるテーブルヘッダセル。
+// 非アクティブ時は中立の上下アイコン、自身のフィールドがアクティブな並び順のときは
+// 方向付きの矢印を描画する。tasks テーブルで最初に使われたパターンを踏襲し、
+// アプリ全体で並べ替え可能な列の見た目と挙動を揃える。
 export function SortableHead<Field extends string>({
   field,
   label,
@@ -32,8 +32,8 @@ export function SortableHead<Field extends string>({
   let ariaSort: React.AriaAttributes["aria-sort"] = "none";
   if (active) ariaSort = direction === "asc" ? "ascending" : "descending";
 
-  let actionLabel = `按${label}倒序排序`;
-  if (active) actionLabel = `${label}当前${direction === "asc" ? "正序" : "倒序"}，点击切换排序方向`;
+  let actionLabel = `${label}で降順に並べ替え`;
+  if (active) actionLabel = `${label}は現在${direction === "asc" ? "昇順" : "降順"}。クリックで並び順を切り替え`;
 
   let icon = <ArrowUpDownIcon className="size-3.5 opacity-40 transition-opacity group-hover/sort:opacity-100" />;
   if (active) icon = direction === "asc" ? <ArrowUpIcon className="size-3.5" /> : <ArrowDownIcon className="size-3.5" />;

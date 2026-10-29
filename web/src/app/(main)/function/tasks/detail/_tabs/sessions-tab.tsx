@@ -70,35 +70,35 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// resolutionLabel names the LLM a session runs on. The badge shows this alone and
-// keeps the model id in its tooltip. Env-backed configs can arrive without a name,
-// so fall back to the model id rather than rendering an empty badge.
+// resolutionLabel はセッションが動作する LLM の名前を返す。バッジはこれのみを表示し、
+// モデル id はツールチップに保持する。env ベースの設定は名前なしで届くことがあるため、
+// 空のバッジを描画せずモデル id にフォールバックする。
 function resolutionLabel(r: TaskLLMResolution): string {
-  return r.name || r.model || "未命名配置";
+  return r.name || r.model || "名称未設定の設定";
 }
 
-// fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
+// fmtBytes は添付チップ用に人間が読めるファイルサイズを描画する（transcript.tsx と同じ）。
 function fmtBytes(n: number): string {
   if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`;
   return `${n} B`;
 }
 
-// ── Reliability model (see docs/task-session-history-sse-remediation.md) ──────────
-// The task's activity is NO LONGER one unbounded `allActivity` array replayed from
-// SSE since=0. Instead:
-//   • Each UI session (main | plan | intent:<id>) has its own lazily-loaded, reverse-
-//     paginated cache (SessionState below). Opening a session loads only its latest
-//     page; scrolling up pages older history in.
-//   • A single task-level SSE (opened at since=snapshot_cursor from the first history
-//     page) tails ALL agents' new activity; frames are dispatched by session_key.
-//   • History + SSE meet gap-free at snapshot_cursor and are merged by seq (dedup),
-//     so refresh / tab-switch / sleep / reconnect never drop the newest records.
+// ── 信頼性モデル（docs/task-session-history-sse-remediation.md 参照） ──────────
+// タスクのアクティビティは、SSE since=0 から再生する無制限の `allActivity` 配列では
+// なくなった。代わりに:
+//   • 各 UI セッション（main | plan | intent:<id>）が、遅延読み込み・逆方向ページ
+//     ネーションの独自キャッシュ（下記 SessionState）を持つ。セッションを開くと最新
+//     ページのみを読み込み、上へスクロールすると古い履歴を追加読み込みする。
+//   • タスク単位の単一 SSE（最初の履歴ページの since=snapshot_cursor で開く）が全
+//     Agent の新規アクティビティを追跡し、フレームは session_key で振り分ける。
+//   • 履歴と SSE は snapshot_cursor で隙間なく接続し、seq でマージ（重複排除）される
+//     ため、リフレッシュ / タブ切替 / スリープ / 再接続でも最新レコードを失わない。
 
-const PAGE = 200; // history page size
-const SYSTEM_SCAN_PAGE = 500; // generic activity pages scanned to recover sparse system audit events
-const MAX_KEEP = 4000; // per-session in-memory cap; older pages re-fetched on scroll-up
-const STREAM_WINDOW_MS = 5000; // "live" = activity seen within this window
+const PAGE = 200; // 履歴のページサイズ
+const SYSTEM_SCAN_PAGE = 500; // 疎なシステム監査イベントを回収するために走査する汎用アクティビティのページサイズ
+const MAX_KEEP = 4000; // セッションごとのメモリ上限。古いページは上スクロール時に再取得する
+const STREAM_WINDOW_MS = 5000; // 「ライブ」= この時間内に観測されたアクティビティ
 const MAX_WORKER_MESSAGE_CHARS = 4000;
 
 function newWorkerMessageRequestID(): string {
@@ -112,18 +112,18 @@ function workerMessageCharCount(value: string): number {
   return Array.from(value).length;
 }
 
-// One session's lazily-loaded, reverse-paginated cache. `lastTs`/`unread` are kept
-// live even for sessions that were never opened, so the list shows liveness + unread
-// without holding their full history.
+// 1 セッション分の遅延読み込み・逆方向ページネーションキャッシュ。`lastTs`/`unread` は
+// 一度も開かれていないセッションでも最新に保たれ、完全な履歴を保持せずに一覧へライブ状態と
+// 未読数を表示できる。
 type SessionState = {
   items: Activity[];
   loaded: boolean;
   loading: boolean;
   loadingMore: boolean;
-  hasMore: boolean; // older history remains above the loaded window
-  earliestSeq: number; // earliest loaded id — reverse-pagination anchor
+  hasMore: boolean; // 読み込み済みウィンドウより上に古い履歴が残っている
+  earliestSeq: number; // 読み込み済みの最古 id — 逆方向ページネーションのアンカー
   unread: number;
-  lastTs: string; // most-recent activity time (drives live badge; updated even when unloaded)
+  lastTs: string; // 最新アクティビティ時刻（ライブバッジの判定に使用。未読み込みでも更新される）
   error?: string;
 };
 type SessionStore = Record<string, SessionState>;
@@ -141,19 +141,19 @@ function emptyState(): SessionState {
   };
 }
 
-// sessionKeyOf routes an activity to its stable session key. worker="planner" covers
-// BOTH the Goal Agent's round-0 decomposition and the Planner (single Plan session).
+// sessionKeyOf はアクティビティを安定したセッションキーへ振り分ける。worker="planner" は
+// Goal Agent のラウンド 0 分解とプランナーの両方をカバーする（単一の Plan セッション）。
 function sessionKeyOf(a: Activity): string {
   if (a.worker === "system" || a.kind === "llm_switch" || a.kind === "llm_failover") return "system";
-  if (a.worker === "mainagent") return `main:${a.main_seg ?? 0}`; // one key per conversation segment
+  if (a.worker === "mainagent") return `main:${a.main_seg ?? 0}`; // 会話セグメントごとに 1 キー
   if (a.worker === "planner") return "plan";
   if (a.intent_id) return `intent:${a.intent_id}`;
   return "unknown";
 }
 
-// mergeBySeq unions two activity lists by seq (dedup) in ascending seq order. Every
-// data source — latest page, older page, SSE compensation, live tail — goes through
-// this, so history responses can never clobber live records received meanwhile.
+// mergeBySeq は 2 つのアクティビティリストを seq で統合（重複排除）し、seq 昇順に並べる。
+// 最新ページ、古いページ、SSE 補償、ライブテールのすべてがこれを経由するため、履歴応答が
+// その間に受信したライブレコードを上書きすることはない。
 function mergeBySeq(current: Activity[], incoming: Activity[]): Activity[] {
   if (!incoming.length) return current;
   const bySeq = new Map<number, Activity>();
@@ -162,31 +162,31 @@ function mergeBySeq(current: Activity[], incoming: Activity[]): Activity[] {
   return [...bySeq.values()].sort((p, q) => p.seq - q.seq);
 }
 
-// statusIcon maps a session status to its icon. Worker terminal states are
-// distinct & color-coded: 完成(绿勾圈) / 取消停止(琥珀斜杠圈) / 出错(红叉圈) /
-// 步数耗尽(紫). running=蓝色转圈, pending(待领取)=灰时钟.
+// statusIcon はセッション状態をアイコンに対応付ける。Worker の終端状態は区別して
+// 色分けする: 完了（緑のチェック丸）/ キャンセル停止（琥珀の斜線丸）/ エラー（赤の×丸）/
+// ステップ枯渇（紫）。running=青の回転、pending（待機中）=グレーの時計。
 function statusIcon(status: SessionStatus) {
   switch (status) {
-    case "running": // 执行中
+    case "running": // 実行中
       return <Loader2Icon className="size-3.5 animate-spin text-blue-500" />;
     case "paused":
       return <PauseIcon className="size-3.5 text-amber-500" />;
-    case "pending": // 待领取(open intent)
+    case "pending": // 待機中（open の意図）
       return <ClockIcon className="size-3.5 text-muted-foreground" />;
-    case "done": // 完成
+    case "done": // 完了
       return <CircleCheckIcon className="size-3.5 text-emerald-500" />;
-    case "stopped": // 取消/停止(被 planner 终止)
+    case "stopped": // キャンセル/停止（プランナーにより終了）
       return <CircleSlashIcon className="size-3.5 text-amber-500" />;
-    case "blocked": // 出错
+    case "blocked": // エラー
       return <CircleXIcon className="size-3.5 text-red-500" />;
-    case "exhausted": // 步数耗尽(撞 max_turns)
+    case "exhausted": // ステップ枯渇（max_turns 到達）
       return <ZapOffIcon className="size-3.5 text-violet-500" />;
-    case "deleted": // 用户假删除
+    case "deleted": // ユーザーによるソフト削除
       return <CircleSlashIcon className="size-3.5 text-muted-foreground" />;
   }
 }
 
-// fmtTokens renders a compact token count (1234 → 1.2k, 2_000_000 → 2M).
+// fmtTokens はトークン数を簡潔に描画する（1234 → 1.2k、2_000_000 → 2M）。
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
@@ -202,7 +202,7 @@ const TokenMetrics = React.forwardRef<
     labels?: "short" | "long";
   }
 >(({ input, cache, output, labels = "short", className, ...props }, ref) => {
-  const names = labels === "short" ? ["入", "缓", "出"] : ["input", "cache", "output"];
+  const names = labels === "short" ? ["入", "キ", "出"] : ["入力", "キャッシュ", "出力"];
   const values = [input, cache, output];
   return (
     <span
@@ -223,7 +223,7 @@ const TokenMetrics = React.forwardRef<
 });
 TokenMetrics.displayName = "TokenMetrics";
 
-// fmtDuration renders an elapsed milliseconds span compactly (90s → 1m30s).
+// fmtDuration は経過ミリ秒を簡潔に描画する（90s → 1m30s）。
 function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -234,22 +234,22 @@ function fmtDuration(ms: number): string {
 }
 
 const roleMeta = {
-  mainagent: { label: "主 Agent", icon: UserIcon },
-  planner: { label: "规划 Planner", icon: BrainIcon },
+  mainagent: { label: "メイン Agent", icon: UserIcon },
+  planner: { label: "プランナー Planner", icon: BrainIcon },
   worker: { label: "Workers", icon: RadioIcon },
-  system: { label: "系统审计", icon: HistoryIcon },
+  system: { label: "システム監査", icon: HistoryIcon },
 } as const;
 
-// The main-agent session is the interactive entry point of this tab and has no
-// dedicated backend "sessions" endpoint — it is a fixed UI affordance whose
-// transcript is the main-agent activity stream (worker="mainagent") for the task.
-// A main-agent session is one resettable conversation segment. Segment 0 is the
-// original session; "新建会话" creates further segments (seq 1,2,…) so the agent
-// starts on a clean transcript while the task's graph/assets/goal stay shared. Each
-// segment is a switchable UI session; only the current (highest) one is writable.
+// メイン Agent セッションはこのタブの対話エントリポイントであり、専用のバックエンド
+// 「sessions」エンドポイントは存在しない。トランスクリプトがタスクのメイン Agent
+// アクティビティストリーム（worker="mainagent"）になる、固定の UI 要素である。
+// メイン Agent セッションはリセット可能な 1 つの会話セグメント。セグメント 0 が元の
+// セッションで、「新規セッション」は追加のセグメント（seq 1,2,…）を作成する。これにより
+// タスクのグラフ/資産/ゴールを共有したまま、Agent はクリーンなトランスクリプトで開始する。
+// 各セグメントは切替可能な UI セッションで、書き込み可能なのは現在（最大）のものだけ。
 const mainSessionId = (seg: number) => `s-main-${seg}`;
 const mainSessionKey = (seg: number) => `main:${seg}`;
-const mainSessionTitle = (seg: number) => `主 Agent · 会话 #${seg + 1}`;
+const mainSessionTitle = (seg: number) => `メイン Agent · セッション #${seg + 1}`;
 const MAIN_ID = mainSessionId(0);
 const MAIN_SESSION: Session = {
   id: MAIN_ID,
@@ -261,34 +261,34 @@ const MAIN_SESSION: Session = {
   seg: 0,
 };
 
-// The planner session is, like the main-agent session, a fixed UI affordance with
-// no dedicated backend "sessions" endpoint — its transcript is every activity step
-// the planner emits (worker === "planner", which also carries the Goal Agent's
-// round-0 decomposition; the planner carries no intent_id since it generates intents).
+// プランナーセッションもメイン Agent セッションと同様、専用のバックエンド「sessions」
+// エンドポイントを持たない固定の UI 要素である。トランスクリプトはプランナーが出力する
+// すべてのアクティビティステップ（worker === "planner"。Goal Agent のラウンド 0 分解も
+// 含む。プランナーは意図を生成する側なので intent_id を持たない）。
 const PLANNER_ID = "s-planner";
 const PLANNER_SESSION: Session = {
   id: PLANNER_ID,
   role: "planner",
-  title: "规划 Planner · 态势研判",
+  title: "プランナー Planner · 状況判断",
   status: "running",
   live: true,
   last_activity: "",
 };
 
-// LLM provider switches are task-level audit events rather than agent output. The
-// history endpoint has no "system" filter, so this fixed session is populated by
-// scanning the generic incremental activity endpoint and then tailed by task SSE.
+// LLM プロバイダーの切替はエージェント出力ではなくタスク単位の監査イベントである。
+// 履歴エンドポイントに「system」フィルターはないため、この固定セッションは汎用の
+// 増分アクティビティエンドポイントを走査して埋め、その後タスク SSE で追跡する。
 const SYSTEM_ID = "s-system";
 const SYSTEM_SESSION: Session = {
   id: SYSTEM_ID,
   role: "system",
-  title: "系统事件 · LLM 故障转移",
+  title: "システムイベント · LLM フェイルオーバー",
   status: "done",
   live: false,
   last_activity: "",
 };
 
-// keyForSession maps a UI Session → its stable store key (main:<seg> | plan | intent:<id>).
+// keyForSession は UI の Session → 安定したストアキー（main:<seg> | plan | intent:<id>）を返す。
 function keyForSession(s: Session): string {
   if (s.role === "mainagent") return `main:${s.seg ?? 0}`;
   if (s.role === "planner") return "plan";
@@ -296,7 +296,7 @@ function keyForSession(s: Session): string {
   return `intent:${s.intent_id}`;
 }
 
-// Map an exploration intent (TaskNode) state → a session status the UI renders.
+// 探索意図（TaskNode）の状態 → UI が描画するセッション状態にマップする。
 function intentStatus(state: string): SessionStatus {
   switch (state) {
     case "done":
@@ -309,17 +309,17 @@ function intentStatus(state: string): SessionStatus {
       return "stopped";
     case "paused":
       return "paused";
-    case "open": // 待领取，区别于执行中
+    case "open": // 待機中。実行中とは異なる
       return "pending";
-    case "deleted": // 用户假删除
+    case "deleted": // ユーザーによるソフト削除
       return "deleted";
     default: // running
       return "running";
   }
 }
 
-// Derive worker sessions from running/open intents — there is no backend
-// sessions endpoint, so intents (≈ worker units) are the closest real source.
+// Worker セッションは実行中/オープンな意図から導出する。バックエンドに sessions
+// エンドポイントはないため、意図（≒ Worker の処理単位）が最も近い実データ源である。
 function intentToSession(n: TaskNode): Session {
   const label = (n.payload ?? "").trim();
   const state = intentStatus(n.state);
@@ -369,7 +369,7 @@ function SessionItem({
     s.role === "worker" &&
     !s.inherited &&
     !deleted &&
-    // pending = 待领(open)意图;连同运行中/已暂停都允许删除。
+    // pending = 待機中（open）の意図。実行中/一時停止中も削除を許可する。
     (s.status === "running" || s.status === "paused" || s.status === "pending");
   return (
     <div
@@ -391,7 +391,7 @@ function SessionItem({
         )}
         {s.inherited && s.source_task_id && (
           <Badge variant="outline" className="shrink-0">
-            来源 #{s.source_task_id}
+            ソース #{s.source_task_id}
           </Badge>
         )}
         <span
@@ -401,7 +401,7 @@ function SessionItem({
         </span>
         {deleted && (
           <Badge variant="outline" className="shrink-0 border-destructive/40 text-destructive">
-            已删除
+            削除済み
           </Badge>
         )}
         {hasPending && <ShieldAlertIcon className="size-3.5 shrink-0 text-amber-500" />}
@@ -413,7 +413,7 @@ function SessionItem({
         {s.live && (
           <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
             <span className="size-1 animate-pulse rounded-full bg-blue-500" />
-            实时
+            リアルタイム
           </span>
         )}
       </button>
@@ -425,8 +425,8 @@ function SessionItem({
             size="icon-xs"
             onClick={onCancel}
             disabled={controlling}
-            title="删除该意图（需填写原因，可选假删除/真删除）"
-            aria-label="删除该意图（需填写原因，可选假删除/真删除）"
+            title="この意図を削除（理由が必須。ソフト削除/完全削除を選択可能）"
+            aria-label="この意図を削除（理由が必須。ソフト削除/完全削除を選択可能）"
             className="text-destructive hover:text-destructive"
           >
             <Trash2Icon />
@@ -456,7 +456,7 @@ function WorkerAssetBadge({ assets }: { assets: IntentAsset[] }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <Badge variant="outline" className="max-w-60 shrink-0 font-normal" title={firstRawLabel}>
-          <span className="truncate">当前资产：{firstLabel}</span>
+          <span className="truncate">現在の資産：{firstLabel}</span>
           {displayAssets.length > 1 && <span className="shrink-0 tabular-nums">+{displayAssets.length - 1}</span>}
         </Badge>
       </TooltipTrigger>
@@ -467,7 +467,7 @@ function WorkerAssetBadge({ assets }: { assets: IntentAsset[] }) {
               <div className="break-all font-mono text-xs">{asset.label.trim() || `#${asset.asset_id}`}</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
                 {taskAssetTypeLabel(asset.type)} · {taskAssetSourceLabel(asset.source)}
-                {asset.inherited ? ` · 来源任务 #${asset.source_task_id}` : ""}
+                {asset.inherited ? ` · ソースタスク #${asset.source_task_id}` : ""}
               </div>
               <div className="mt-0.5 [overflow-wrap:anywhere] text-xs">{asset.source_summary}</div>
             </div>
@@ -503,25 +503,27 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     }
     return undefined;
   }, [approvalFocus.state?.source]);
-  // Keep a located archived/older session selectable after leaving focus mode.
+  // 配置済みのアーカイブ/過去セッションを、フォーカスモードを抜けた後も選択可能に保つ。
   const [locatedSession, setLocatedSession] = React.useState<{ taskId: string; session: Session }>();
   React.useEffect(() => {
     if (focusSession) setLocatedSession({ taskId, session: focusSession });
   }, [taskId, focusSession]);
   const retainedSession = locatedSession?.taskId === taskId ? locatedSession.session : undefined;
   const activeId = focusSession?.id ?? selectedSessionId;
-  // Main-agent conversation segments (newest-first); currentSeg is the writable one.
+  // メイン Agent の会話セグメント（新しい順）。currentSeg が書き込み可能なもの。
   const [mainSegs, setMainSegs] = React.useState<{ seq: number; created_at: string }[]>([{ seq: 0, created_at: "" }]);
   const [currentSeg, setCurrentSeg] = React.useState(0);
   const [creatingMain, setCreatingMain] = React.useState(false);
   const [confirmNewMain, setConfirmNewMain] = React.useState(false);
-  // 手机端（<lg）会话列表默认折叠：屏幕高度本就紧张，列表若固定占掉 10~15rem，
-  // 下方的会话记录会被挤到只剩标题与输入框。折叠后记录区拿到几乎全部高度，
-  // 点标题栏可展开选会话，选完自动收起。桌面端不受影响（lg 起始终展开）。
+  // モバイル（<lg）ではセッション一覧を既定で折りたたむ。画面の高さが元々厳しく、
+  // 一覧が固定で 10〜15rem を占めると、下のセッション記録がタイトルと入力欄だけに
+  // 押し込まれてしまう。折りたたむと記録領域がほぼ全高を使え、タイトルバーをタップ
+  // すれば展開してセッションを選べ、選択後に自動で折りたたまれる。デスクトップは
+  // 影響を受けない（lg 以上は常に展開）。
   const [listOpen, setListOpen] = React.useState(false);
-  // Per-session lazily-loaded caches, keyed by session_key (main | plan | intent:<id>).
+  // セッションごとの遅延読み込みキャッシュ。session_key（main | plan | intent:<id>）でキー付け。
   const [store, setStore] = React.useState<SessionStore>({});
-  // Worker sessions derived from exploration intents (paged past the old 300 cap).
+  // 探索意図から導出した Worker セッション（旧 300 件上限を超えてページング）。
   const [intents, setIntents] = React.useState<TaskNode[]>([]);
   const [intentAssets, setIntentAssets] = React.useState<IntentAsset[]>([]);
   const [olderIntents, setOlderIntents] = React.useState<TaskNode[]>([]);
@@ -536,12 +538,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [controllingIntent, setControllingIntent] = React.useState<string | null>(null);
   const [cancelIntent, setCancelIntent] = React.useState<Session | null>(null);
   const [cancelReason, setCancelReason] = React.useState("");
-  // 删除模式:soft=假删除(默认,置 deleted + 记原因,保留数据)| hard=真删除(级联移除独占子孙)。
+  // 削除モード: soft=ソフト削除（既定。deleted に設定 + 理由を記録し、データは保持）|
+  // hard=完全削除（独占する子孫をカスケード削除）。
   const [deleteMode, setDeleteMode] = React.useState<"soft" | "hard">("soft");
   const [workerMessage, setWorkerMessage] = React.useState("");
   const [workerMessageRequestId, setWorkerMessageRequestId] = React.useState("");
   const [workerMessageSending, setWorkerMessageSending] = React.useState(false);
-  // 方式1 文件上传:选好的附件(已落到任务工作目录 uploads/),随下条消息一起发。
+  // 方法 1 のファイルアップロード:選択済みの添付（タスク作業ディレクトリの uploads/ に
+  // 保存済み）を、次のメッセージと一緒に送信する。
   const [attachments, setAttachments] = React.useState<ChatAttachment[]>([]);
   const [uploading, setUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -553,16 +557,16 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       const r = await api.chatUpload("task", taskId, Array.from(files));
       setAttachments((prev) => [...prev, ...r.attachments]);
     } catch (e) {
-      toast.error(`上传失败：${(e as Error).message}`);
+      toast.error(`アップロードに失敗しました：${(e as Error).message}`);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  // Start a fresh main-agent session: only the segment counter advances — the task's
-  // graph/assets/goal are untouched, so the agent continues over the same task with a
-  // clean context. The old segment stays as read-only history you can switch back to.
+  // メイン Agent の新しいセッションを開始する。進むのはセグメント番号だけで、タスクの
+  // グラフ/資産/ゴールは変わらないため、Agent は同じタスク上をクリーンなコンテキストで
+  // 継続する。旧セグメントは読み取り専用の履歴として残り、いつでも切り替えられる。
   async function createMainSession() {
     if (creatingMain) return;
     setCreatingMain(true);
@@ -570,13 +574,13 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       const r = await api.newMainSession(taskId);
       setMainSegs((prev) => [{ seq: r.seq, created_at: r.created_at }, ...prev.filter((m) => m.seq !== r.seq)]);
       setCurrentSeg(r.current ?? r.seq);
-      // Seed an empty, loaded state so the new (empty) session renders immediately.
+      // 空の loaded 状態を仕込んで、新しい（空の）セッションを即座に描画できるようにする。
       setStore((prev) => ({ ...prev, [mainSessionKey(r.seq)]: { ...emptyState(), loaded: true } }));
       setActiveId(mainSessionId(r.seq));
       setListOpen(false);
       setInput("");
     } catch (e) {
-      toast.error(`新建会话失败：${(e as Error).message}`);
+      toast.error(`新規セッションの作成に失敗しました：${(e as Error).message}`);
     } finally {
       setCreatingMain(false);
       setConfirmNewMain(false);
@@ -596,7 +600,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     async (session: Session, action: "pause" | "resume" | "cancel", reason?: string, mode?: "soft" | "hard") => {
       if (!session.intent_id || session.inherited || controllingIntent) return;
       if (action === "cancel" && !reason?.trim()) {
-        toast.error("请填写删除原因");
+        toast.error("削除理由を入力してください");
         return;
       }
       setControllingIntent(session.intent_id);
@@ -604,25 +608,27 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         const res = await api.controlIntent(taskId, session.intent_id, action, reason, mode);
         if (action === "pause") {
           patchIntentState(session.intent_id, "paused");
-          toast.success(`Worker #${session.intent_id} 已暂停`);
+          toast.success(`Worker #${session.intent_id} を一時停止しました`);
         } else if (action === "resume") {
           patchIntentState(session.intent_id, "open");
-          toast.success(`Worker #${session.intent_id} 已恢复，等待重新领取`);
+          toast.success(`Worker #${session.intent_id} を再開しました。再取得を待っています`);
         } else if (mode === "hard") {
-          // 真删除:意图及独占下游已物理移除,从列表剔除该行。
+          // 完全削除:意図と独占する下流が物理削除されるため、一覧から行を除去する。
           patchIntentState(session.intent_id);
           const d = res.deleted;
-          const extra = d ? `（含 ${d.intents} 意图 / ${d.facts} 事实 / ${d.findings} 漏洞）` : "";
-          toast.success(`Worker #${session.intent_id} 及其独占下游已彻底删除${extra}`);
+          const extra = d ? `（意図 ${d.intents} / 事実 ${d.facts} / 脆弱性 ${d.findings} を含む）` : "";
+          toast.success(`Worker #${session.intent_id} とその独占下流を完全に削除しました${extra}`);
           setCancelReason("");
         } else {
-          // 假删除:意图置 deleted、记录删除原因,保留节点与产出。
+          // ソフト削除:意図を deleted にし削除理由を記録。ノードと成果は保持する。
           patchIntentState(session.intent_id, "deleted");
-          toast.success(`Worker #${session.intent_id} 已删除（原因已记录，规划者将据此重新规划）`);
+          toast.success(
+            `Worker #${session.intent_id} を削除しました（理由を記録済み。プランナーがこれに基づいて再計画します）`,
+          );
           setCancelReason("");
         }
       } catch (error) {
-        toast.error(`Worker 操作失败：${(error as Error).message}`);
+        toast.error(`Worker の操作に失敗しました：${(error as Error).message}`);
       } finally {
         setControllingIntent(null);
         setCancelIntent(null);
@@ -631,44 +637,44 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [controllingIntent, patchIntentState, taskId],
   );
 
-  // SSE connection state — surfaced so a dropped realtime link is visible, never
-  // silently shown as "no messages".
+  // SSE 接続状態。リアルタイムリンクの切断を可視化し、「メッセージなし」と
+  // 誤って表示されないようにする。
   const [sseLive, setSseLive] = React.useState(false);
-  // Whole-task token total (all agents), polled from the backend aggregate.
+  // タスク全体のトークン合計（全エージェント）。バックエンド集計値からポーリングする。
   const [taskTokens, setTaskTokens] = React.useState<TokenTotal | null>(null);
   const [sessionTokens, setSessionTokens] = React.useState<Record<string, SessionTokenUsage>>({});
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
-  // Pending intercept requests for this task — used to show warning icons on sessions.
+  // このタスクの保留中のインターセプト要求 — セッションに警告アイコンを出すために使う。
   const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
 
-  // Refs backing SSE/loading without re-render churn.
-  const snapshotRef = React.useRef(0); // task-level snapshot cursor → SSE since=
+  // 再レンダリングを誘発せずに SSE/読み込みを支える ref 群。
+  const snapshotRef = React.useRef(0); // タスク単位のスナップショットカーソル → SSE since=
   const esRef = React.useRef<EventSource | null>(null);
-  const activeKeyRef = React.useRef(mainSessionKey(0)); // current session key (for SSE dispatch/unread)
-  const atBottomRef = React.useRef(true); // transcript pinned to bottom?
+  const activeKeyRef = React.useRef(mainSessionKey(0)); // 現在のセッションキー（SSE 振り分け/未読用）
+  const atBottomRef = React.useRef(true); // トランスクリプトが最下部に固定されているか
   const llmToastSeqRef = React.useRef<Set<number>>(new Set());
   const chatStatusRequestRef = React.useRef(0);
   const firstIntentsRef = React.useRef<TaskNode[]>([]);
-  // Per-key request token: a stale response for a key is ignored (guards fast
-  // latest/older interleaving). Writes are ALWAYS keyed, so a late response can only
-  // touch its own session cache — never the currently-viewed one (see §7.5).
+  // キーごとのリクエストトークン:あるキーの古い応答は無視する（最新/古いページの高速な
+  // 交互読み込みを保護）。書き込みは常にキー付きなので、遅延応答は自分のセッション
+  // キャッシュにしか触れず、現在表示中のものには決して影響しない（§7.5 参照）。
   const reqTokenRef = React.useRef<Record<string, number>>({});
-  // Keys with a latest-page load in flight — dedups the double trigger where the
-  // first-load effect and the active-session effect both want "main" on mount (the
-  // former also opens the SSE, so it must not be pre-empted).
+  // 最新ページの読み込みが進行中のキー。初回読み込みエフェクトとアクティブセッション
+  // エフェクトがマウント時に同時に「main」を要求する二重トリガーを排除する（前者は
+  // SSE も開くため、先を越されてはならない）。
   const loadingKeysRef = React.useRef<Set<string>>(new Set());
 
-  // ── store helpers ──────────────────────────────────────────────────────────────
+  // ── ストアヘルパー ────────────────────────────────────────────────────────────
   const patchStore = React.useCallback((key: string, fn: (s: SessionState) => SessionState) => {
     setStore((prev) => ({ ...prev, [key]: fn(prev[key] ?? emptyState()) }));
   }, []);
 
-  // Load a session's LATEST page (before=0) on first open. Keyed + request-token
-  // guarded so a switch away can't corrupt the view.
+  // 初回オープン時にセッションの最新ページ（before=0）を読み込む。キー付き +
+  // リクエストトークンで保護するため、切替中でも表示が壊れない。
   const loadSession = React.useCallback(
     (key: string) => {
-      if (MOCK) return; // MOCK preloads everything up front
-      if (loadingKeysRef.current.has(key)) return; // already in flight (e.g. main on mount)
+      if (MOCK) return; // MOCK は全データを事前に読み込む
+      if (loadingKeysRef.current.has(key)) return; // 既に進行中（例:マウント時の main）
       loadingKeysRef.current.add(key);
       const token = (reqTokenRef.current[key] ?? 0) + 1;
       reqTokenRef.current[key] = token;
@@ -710,7 +716,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             patchStore(key, (s) => ({
               ...s,
               loading: false,
-              error: (error as Error).message || "加载失败",
+              error: (error as Error).message || "読み込みに失敗しました",
             }));
           })
           .finally(() => loadingKeysRef.current.delete(key));
@@ -720,10 +726,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       api
         .activityHistory(taskId, key, 0, PAGE)
         .then((r) => {
-          if (reqTokenRef.current[key] !== token) return; // superseded
+          if (reqTokenRef.current[key] !== token) return; // 上書きされた
           if (r.snapshotCursor > snapshotRef.current) snapshotRef.current = r.snapshotCursor;
           patchStore(key, (s) => {
-            const items = mergeBySeq(r.items, s.items); // keep any live frames arrived meanwhile
+            const items = mergeBySeq(r.items, s.items); // その間に届いたライブフレームを保持
             return {
               ...s,
               items,
@@ -738,14 +744,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         })
         .catch((e) => {
           if (reqTokenRef.current[key] !== token) return;
-          patchStore(key, (s) => ({ ...s, loading: false, error: (e as Error).message || "加载失败" }));
+          patchStore(key, (s) => ({ ...s, loading: false, error: (e as Error).message || "読み込みに失敗しました" }));
         })
         .finally(() => loadingKeysRef.current.delete(key));
     },
     [taskId, patchStore],
   );
 
-  // Load one older page (scroll-up) for a session, preserving scroll position.
+  // セッションの古いページを 1 つ読み込み（上スクロール）、スクロール位置を保持する。
   const loadEarlier = React.useCallback(
     (key: string, viewport: () => HTMLElement | null) => {
       const st = store[key];
@@ -779,7 +785,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [taskId, store, patchStore],
   );
 
-  // ── task token total (whole task, all agents) ───────────────────────────────────
+  // ── タスクのトークン合計（タスク全体、全エージェント） ──────────────────────────
   React.useEffect(() => {
     let alive = true;
     const load = () =>
@@ -791,7 +797,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
         })
         .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+          // ポーリングはベストエフォート。次のインターバルで自動的に再試行する。
         });
     void load();
     const t = setInterval(load, 5000);
@@ -812,8 +818,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           if (alive && chatStatusRequestRef.current === request) setMainChatRunning(running);
         })
         .catch(() => {
-          // Keep the last authoritative value. Before the first success, recent
-          // activity remains a conservative fallback.
+          // 最後に取得できた信頼できる値を保持する。初回成功前は、直近のアクティビティが
+          // 保守的なフォールバックとして機能する。
         });
     };
     void load();
@@ -833,7 +839,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           if (alive) setLLMResolutions(value);
         })
         .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+          // ポーリングはベストエフォート。次のインターバルで自動的に再試行する。
         });
     void load();
     const timer = setInterval(load, 10_000);
@@ -852,7 +858,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           if (alive) setPendingIntercepts(rows.filter((r) => r.status === "pending"));
         })
         .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+          // ポーリングはベストエフォート。次のインターバルで自動的に再試行する。
         });
     void load();
     const t = setInterval(load, 5000);
@@ -862,19 +868,20 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     };
   }, [taskId]);
 
-  // Re-render on a timer so "streaming" liveness recomputes as activity goes stale.
+  // アクティビティが古くなるにつれて「ストリーミング中」の判定を再計算できるよう、
+  // タイマーで再レンダリングする。
   const [, setTick] = React.useState(0);
   React.useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1500);
     return () => clearInterval(id);
   }, []);
 
-  // ── first load + single task SSE ────────────────────────────────────────────────
-  // On task open: load Main's latest page, take the task-level snapshot cursor from
-  // it, THEN open ONE task SSE at since=snapshot_cursor. History covers id≤cursor and
-  // the SSE covers id>cursor with no gap. The SSE tails ALL agents; frames are routed
-  // by session_key. EventSource auto-reconnects and (via our `id:` lines → Last-Event-
-  // ID) resumes from the DB, so a dropped realtime link self-heals; seq-merge dedups.
+  // ── 初回読み込み + 単一タスク SSE ─────────────────────────────────────────────
+  // タスクを開いたら、まず Main の最新ページを読み込み、そのスナップショットカーソルを
+  // 取得してから since=snapshot_cursor で 1 本のタスク SSE を開く。履歴が id≤cursor を、
+  // SSE が id>cursor を隙間なくカバーする。SSE は全エージェントを追跡し、フレームは
+  // session_key で振り分ける。EventSource は自動再接続し（`id:` 行 → Last-Event-ID）、
+  // DB から再開するため、リアルタイムリンクが切れても自己修復する。seq マージで重複排除。
   React.useEffect(() => {
     setStore({});
     setIntents([]);
@@ -887,18 +894,18 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     setSessionTokens({});
     setLLMResolutions(null);
     setSseLive(false);
-    setActiveId(MAIN_ID); // a stale worker id from the previous task must not leak in
+    setActiveId(MAIN_ID); // 前のタスクの古い worker id が漏れないようにする
     setMainSegs([{ seq: 0, created_at: "" }]);
     setCurrentSeg(0);
     snapshotRef.current = 0;
     llmToastSeqRef.current = new Set();
     reqTokenRef.current = {};
-    // Reserve the initial main key so the active-session effect (which fires for main on
-    // mount) won't double-load it and pre-empt the SSE opened here.
+    // 初期の main キーを予約し、アクティブセッションエフェクト（マウント時に main で
+    // 発火する）が二重読み込みして、ここで開く SSE の先を越さないようにする。
     loadingKeysRef.current = new Set([mainSessionKey(0)]);
     let alive = true;
 
-    // MOCK demo: no SSE backend — pull one activity snapshot and bucket by session.
+    // MOCK デモ:SSE バックエンドがないため、アクティビティを 1 回取得してセッション別に振り分ける。
     if (MOCK) {
       api
         .activity(taskId)
@@ -936,9 +943,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     const token = (reqTokenRef.current.mainboot ?? 0) + 1;
     reqTokenRef.current.mainboot = token;
     let bootKey = mainSessionKey(0);
-    // Resolve the main-agent segments first, then load the CURRENT segment's history and
-    // open the SSE from its snapshot cursor. The SSE tails all segments and routes each
-    // frame by session_key (main:<seg>), so switching segments needs no new stream.
+    // まずメイン Agent のセグメントを解決し、現在のセグメントの履歴を読み込んで、その
+    // スナップショットカーソルから SSE を開く。SSE は全セグメントを追跡し、各フレームを
+    // session_key（main:<seg>）で振り分けるため、セグメント切替に新しいストリームは不要。
     api
       .mainSessions(taskId)
       .then((ms) => {
@@ -968,19 +975,19 @@ export function SessionsTab({ taskId }: { taskId: string }) {
             unread: 0,
           };
         });
-        // Open the single task SSE from the snapshot cursor.
+        // スナップショットカーソルから単一のタスク SSE を開く。
         const es = new EventSource(
           sseUrl(`/api/exploration/activity/stream?task=${encodeURIComponent(taskId)}&since=${snapshotRef.current}`),
         );
         esRef.current = es;
         es.onopen = () => setSseLive(true);
-        es.onerror = () => setSseLive(false); // EventSource auto-reconnects; DB compensates the gap
+        es.onerror = () => setSseLive(false); // EventSource は自動再接続し、DB が隙間を補償する
         es.onmessage = (e) => {
           let a: Activity;
           try {
             a = JSON.parse(e.data) as Activity;
           } catch {
-            return; // ignore malformed frame
+            return; // 不正なフレームは無視
           }
           if ((a.kind === "llm_switch" || a.kind === "llm_failover") && !llmToastSeqRef.current.has(a.seq)) {
             llmToastSeqRef.current.add(a.seq);
@@ -998,17 +1005,17 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 if (alive) setLLMResolutions(value);
               })
               .catch(() => {
-                // The periodic resolver poll will retry if this event-triggered refresh fails.
+                // このイベント起点のリフレッシュが失敗しても、定期的なリゾルバーポーリングが再試行する。
               });
           }
           const k = sessionKeyOf(a);
           setStore((prev) => {
             const cur = prev[k] ?? emptyState();
             const activeK = activeKeyRef.current;
-            // Merge into sessions that are loaded, actively loading, or the current
-            // view (so returning is instant + a frame that lands mid-load isn't lost).
-            // A cold, inactive session also keeps a tiny accounting tail so the
-            // sidebar can add the latest unfinished usage without loading history.
+            // 読み込み済み・読み込み中・現在表示中のセッションにマージする（戻ったとき即座に
+            // 表示でき、読み込み中に届いたフレームも失わない）。コールドで非アクティブな
+            // セッションも、サイドバーが履歴を読み込まずに最新の未完了使用量を加算できるよう
+            // 小さな会計用テールだけ保持する。
             if (!cur.loaded && !cur.loading && k !== activeK) {
               const accountingItems =
                 a.kind === "usage" || a.kind === "result" ? mergeBySeq(cur.items, [a]).slice(-4) : cur.items;
@@ -1018,8 +1025,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               };
             }
             let items = mergeBySeq(cur.items, [a]);
-            // Memory bound: trim oldest when over cap (older re-fetched on scroll-up),
-            // but never while the user is reading this session's history (scrolled up).
+            // メモリ上限:上限を超えたら最古を削る（古いものは上スクロール時に再取得）が、
+            // ユーザーがこのセッションの履歴を読んでいる間（上へスクロール中）は削らない。
             let hasMore = cur.hasMore;
             let earliestSeq = cur.earliestSeq;
             const trimmable = k !== activeK || atBottomRef.current;
@@ -1036,7 +1043,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       .catch((err) => {
         if (!alive || reqTokenRef.current.mainboot !== token) return;
         if ((err as Error).message === "superseded") return;
-        patchStore(bootKey, (s) => ({ ...s, loading: false, error: (err as Error).message || "加载失败" }));
+        patchStore(bootKey, (s) => ({
+          ...s,
+          loading: false,
+          error: (err as Error).message || "読み込みに失敗しました",
+        }));
       })
       .finally(() => loadingKeysRef.current.delete(bootKey));
 
@@ -1056,7 +1067,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           if (active) setIntentAssets(assets);
         })
         .catch(() => {
-          // The next poll retries; Worker controls and transcripts remain available.
+          // 次のポーリングが再試行する。Worker の操作とトランスクリプトは引き続き利用可能。
         });
     void load();
     const timer = setInterval(load, 5000);
@@ -1066,7 +1077,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     };
   }, [taskId]);
 
-  // ── worker (intent) session list — paged, poll first page lightly ───────────────
+  // ── Worker（意図）セッション一覧 — ページングし、先頭ページのみ軽くポーリング ─────
   React.useEffect(() => {
     let active = true;
     firstIntentsRef.current = [];
@@ -1096,7 +1107,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           setFirstIntentsHasMore(r.hasMore);
         })
         .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+          // ポーリングはベストエフォート。次のインターバルで自動的に再試行する。
         });
     void load();
     const t = setInterval(load, 5000);
@@ -1123,16 +1134,16 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         setHasLoadedOlderIntentsPage(true);
       })
       .catch(() => {
-        // A later manual retry can fetch this page again.
+        // 後で手動で再試行すれば、このページをもう一度取得できる。
       })
       .finally(() => setLoadingOlderIntents(false));
   }, [taskId, intents, olderIntents, loadingOlderIntents]);
 
-  // Combined, de-duplicated worker list (newest first page + older loaded pages).
+  // 統合・重複排除済みの Worker 一覧（最新の先頭ページ + 読み込み済みの古いページ）。
   const allIntents = React.useMemo(() => {
     const byId = new Map<string, TaskNode>();
     for (const n of olderIntents) byId.set(n.id, n);
-    for (const n of intents) byId.set(n.id, n); // fresh poll wins over older snapshot
+    for (const n of intents) byId.set(n.id, n); // 新しいポーリングが古いスナップショットより優先
     return [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id));
   }, [intents, olderIntents]);
   const intentAssetsByID = React.useMemo(() => {
@@ -1149,14 +1160,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const workerSessions = React.useMemo(() => allIntents.map(intentToSession), [allIntents]);
   const intentsHasMore = hasLoadedOlderIntentsPage ? olderIntentsHasMore : firstIntentsHasMore;
 
-  // For each worker session (intent), derive the display title from the intent
-  // payload summary. Also store the full TaskNode for the hover-JSON tooltip.
+  // 各 Worker セッション（意図）の表示タイトルを、意図の payload 要約から導出する。
+  // ホバー時の JSON ツールチップ用に、完全な TaskNode も保持する。
   const sessionMeta = React.useMemo(() => {
     const map = new Map<string, { title: string; json: unknown; deleted: boolean; deleteReason: string }>();
     for (const node of allIntents) {
       let title = `Intent ${node.id}`;
       let parsedPayload: unknown = node.payload;
-      // 假删除:意图 state='deleted',删除原因在独立字段 delete_reason 上。
+      // ソフト削除:意図の state='deleted'。削除理由は独立フィールド delete_reason にある。
       const deleted = node.state === "deleted";
       const deleteReason = node.delete_reason ?? "";
       if (node.payload) {
@@ -1174,15 +1185,15 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     return map;
   }, [allIntents]);
 
-  // Returns true if any pending intercept belongs to this session.
-  // Worker agent_name format: "work#N · #intentID". Main/planner match by role key.
+  // このセッションに属する保留中のインターセプトがあれば true を返す。
+  // Worker の agent_name 形式: "work#N · #intentID"。Main/planner はロールキーで照合する。
   const hasPendingForSession = React.useCallback(
     (s: Session): boolean => {
       if (s.inherited) return false;
       if (!pendingIntercepts.length) return false;
       if (s.role === "mainagent") return pendingIntercepts.some((r) => r.agent_name === "mainagent");
       if (s.role === "planner") return pendingIntercepts.some((r) => r.agent_name === "planner");
-      // Worker: extract intent ID from "work#N · #<intentID>"
+      // Worker: "work#N · #<intentID>" から意図 ID を抽出する
       return pendingIntercepts.some((r) => {
         const m = r.agent_name.match(/·\s*#(\d+)$/);
         return m ? m[1] === s.intent_id : false;
@@ -1191,7 +1202,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [pendingIntercepts],
   );
 
-  // Liveness from each session's last-seen activity time (kept fresh by the 1.5s tick).
+  // 各セッションの最終アクティビティ時刻によるライブ判定（1.5 秒の tick で最新に保たれる）。
   const recentLive = React.useCallback(
     (key: string) => {
       const ts = store[key]?.lastTs;
@@ -1204,14 +1215,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const currentMainKey = mainSessionKey(currentSeg);
   const plannerLive = recentLive("plan");
 
-  // Which main segment is streaming RIGHT NOW. A main turn is serialized per task, so at
-  // most one segment is live. Gate on the real running flag (sending / mainChatRunning)
-  // rather than "recent activity", and drop it the moment the turn's terminal record
-  // (kind='result', or an error) lands — otherwise the badge lingers for STREAM_WINDOW_MS
-  // after the agent already finished. null = nothing running.
+  // いまストリーミング中のメインセグメントはどれか。メインのターンはタスク単位で直列化
+  // されるため、ライブなのは最大 1 セグメント。判定は「直近のアクティビティ」ではなく実際の
+  // 実行フラグ（sending / mainChatRunning）で行い、ターンの終端レコード（kind='result' または
+  // エラー）が届いた瞬間に落とす。そうしないと Agent が既に完了しているのにバッジが
+  // STREAM_WINDOW_MS の間残ってしまう。null = 何も実行中でない。
   const liveMainSeg = React.useMemo<number | null>(() => {
     if (!(sending || mainChatRunning)) return null;
-    // the streaming segment is the one with the freshest activity (incl. the just-sent turn)
+    // ストリーミング中のセグメントは最も新しいアクティビティを持つもの（送信直後のターンを含む）
     let seg = currentSeg;
     let bestTs = -1;
     for (const m of mainSegs) {
@@ -1228,8 +1239,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     return seg;
   }, [sending, mainChatRunning, mainSegs, store, currentSeg]);
 
-  // Every main-agent segment is an independent, interactive session (like the top-level
-  // chat conversations) — you can talk in any of them, newest-first.
+  // メイン Agent の各セグメントは独立した対話セッションである（トップレベルのチャット
+  // 会話と同様）。どのセグメントでも発言でき、表示は新しい順になる。
   const mainSessions = React.useMemo<Session[]>(
     () =>
       mainSegs.map((m) => ({
@@ -1271,26 +1282,27 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const isSystem = active.role === "system";
   const activeKey = keyForSession(active);
   const activeState = store[activeKey];
-  // A main turn is serialized per task (chat lock), so "busy" is task-wide: while any
-  // main segment is mid-turn the active composer is disabled. Clear it the moment the
-  // active session's terminal record (kind='result', or an error) lands, so the input
-  // re-enables immediately instead of waiting for the next chat-status poll.
+  // メインのターンはタスク単位で直列化される（チャットロック）ため、「ビジー」はタスク全体に
+  // 及ぶ。どのメインセグメントがターン中でも、アクティブな入力欄は無効になる。アクティブ
+  // セッションの終端レコード（kind='result' またはエラー）が届いた瞬間に解除し、次の
+  // chat-status ポーリングを待たずに入力欄をすぐ元に戻す。
   const activeItems = activeState?.items ?? [];
   const activeLast = activeItems[activeItems.length - 1];
   const activeSettled =
     !!activeLast && (activeLast.kind === "result" || (activeLast.kind === "text" && activeLast.is_error));
   const mainBusy = isMain && (sending || (!activeSettled && (mainChatRunning ?? recentLive(activeKey))));
-  // 折叠态（手机端）标题栏要替代整张列表：显示当前会话名 + 其它会话的未读合计，
-  // 否则收起后既不知道自己在看哪个会话，也看不到别处有新消息。
+  // 折りたたみ時（モバイル）のタイトルバーは一覧全体の代わりになる。現在のセッション名と
+  // 他のセッションの未読合計を表示する。そうしないと、畳んだ後にどのセッションを見ている
+  // のか、他のどこかに新着があるのかが分からなくなる。
   const activeDisplayTitle = (active.role === "worker" ? sessionMeta.get(active.id)?.title : "") || active.title;
   const hiddenUnread = React.useMemo(
     () => Object.entries(store).reduce((sum, [key, s]) => (key === activeKey ? sum : sum + s.unread), 0),
     [store, activeKey],
   );
 
-  // Keep the SSE dispatcher's notion of the active session current, and lazily load
-  // + clear unread whenever the active session changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: cache updates must not reactivate the current session.
+  // SSE ディスパッチャーが把握するアクティブセッションを最新に保ち、アクティブセッションが
+  // 変わるたびに遅延読み込みと未読クリアを行う。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: キャッシュ更新で現在のセッションを再アクティブ化してはならない。
   React.useEffect(() => {
     activeKeyRef.current = activeKey;
     const st = store[activeKey];
@@ -1327,25 +1339,26 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     if (approvalFocus.state) atBottomRef.current = false;
   }, [approvalFocus.state]);
 
-  // Main agent is the human↔orchestrator CONSOLE: only the conversation (user msgs +
-  // the main agent's own replies/steps). Planner session shows planner steps; a
-  // worker session shows only its intent's activity, led by the intent objective.
+  // メイン Agent は人間↔オーケストレーターのコンソールである。表示するのは会話のみ
+  // （ユーザーのメッセージ + メイン Agent 自身の応答/ステップ）。プランナーセッションは
+  // プランナーのステップを表示し、Worker セッションはその意図のアクティビティのみを、
+  // 意図の目的を先頭にして表示する。
   const activity = React.useMemo(() => {
     const items = activeState?.items ?? [];
-    // The main-agent console renders purely from server data: the human turn is
-    // persisted+broadcast by the backend BEFORE it returns, so it arrives over the
-    // same SSE stream (worker="mainagent") as every agent step — no client-side
-    // optimistic echo, hence no fabricated seq that could collide with real DB ids.
+    // メイン Agent コンソールはサーバーデータのみから描画する。人間のターンはバックエンドが
+    // 返す前に永続化 + ブロードキャストするため、他のあらゆる Agent ステップと同じ SSE
+    // ストリーム（worker="mainagent"）で届く。クライアント側の楽観的エコーはなく、実際の
+    // DB id と衝突しうる偽の seq も生成しない。
     if (isMain) return items;
     if (isPlanner || isSystem) return items;
-    // Worker session: the intent leads the transcript as a right-aligned "user"-style
-    // message (the task handed to this worker), followed by its execution steps.
+    // Worker セッション:意図を右寄せの「ユーザー」風メッセージとしてトランスクリプトの先頭に
+    // 置き（この Worker に渡されたタスク）、その後に実行ステップを続ける。
     const intentTitle = sessionMeta.get(active.id)?.title ?? active.title;
     const intentMsg: Activity = {
-      seq: -1, // sorts/leads before any real step (real seq ≥ 0)
-      worker: items[0]?.worker ?? active.id, // reuse the lane so no worker chips appear
+      seq: -1, // 実際のステップより前に並ぶ（実 seq は ≥ 0）
+      worker: items[0]?.worker ?? active.id, // 同じレーンを再利用して Worker チップを出さない
       ts: active.last_activity || "",
-      kind: "intent", // LLM-generated objective — rendered as a distinct (non-human) bubble
+      kind: "intent", // LLM 生成の目的 — 人間でないことが分かる専用バブルとして描画
       summary: intentTitle,
       source_task_id: active.source_task_id,
       inherited: active.inherited,
@@ -1364,7 +1377,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     sessionMeta,
   ]);
 
-  // seq of this session's most-recent TodoWrite call — for the Todo popover.
+  // このセッションで最新の TodoWrite 呼び出しの seq — Todo ポップオーバー用。
   const latestTodoSeq = React.useMemo(() => {
     for (let i = activity.length - 1; i >= 0; i--) {
       const a = activity[i];
@@ -1373,9 +1386,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     return null;
   }, [activity]);
 
-  // Persisted result totals come from the backend's full activity history. Only
-  // the latest unfinished usage frame is added client-side, so partial history
-  // pages cannot undercount completed runs or double-count the active one.
+  // 確定済みの結果合計はバックエンドの完全なアクティビティ履歴から取得する。クライアント側で
+  // 加算するのは最新の未完了 usage フレームのみ。これにより、部分的な履歴ページでも完了済み
+  // 実行を過少に数えたり、実行中のものを二重計上したりしない。
   const tokenForSession = React.useCallback(
     (key: string): TokenTotal => {
       const saved = sessionTokens[key];
@@ -1414,8 +1427,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       0,
   };
 
-  // Run duration = span from this session's first step to its last (for a live
-  // session, "now" so it ticks up — the 1.5s setTick above re-renders it).
+  // 実行時間 = このセッションの最初のステップから最後のステップまでのスパン（ライブ
+  // セッションでは「現在」まで伸び続ける — 上の 1.5 秒 setTick が再レンダリングする）。
   const runDuration = React.useMemo(() => {
     let min = Infinity,
       max = 0;
@@ -1430,26 +1443,26 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     return Math.max(0, end - min);
   }, [activity, active.live]);
 
-  // ---- transcript auto-scroll (open → bottom; stick to bottom unless scrolled up) ----
+  // ---- トランスクリプトの自動スクロール（開く → 最下部。上へスクロールしない限り最下部に固定）----
   const contentRef = React.useRef<HTMLDivElement | null>(null);
   const viewport = React.useCallback(
     () => (contentRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null) ?? null,
     [],
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally rebinds the scroll listener.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId は意図的にスクロールリスナーを再バインドする。
   React.useEffect(() => {
     const vp = viewport();
     if (!vp) return;
     const onScroll = () => {
       if (approvalFocus.state && !focusHistory.ready) return;
       atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
-      if (vp.scrollTop <= 80) loadEarlier(activeKeyRef.current, viewport); // near top → older page
+      if (vp.scrollTop <= 80) loadEarlier(activeKeyRef.current, viewport); // 上部付近 → 古いページ
     };
     vp.addEventListener("scroll", onScroll, { passive: true });
     return () => vp.removeEventListener("scroll", onScroll);
   }, [viewport, activeId, loadEarlier, approvalFocus.state, focusHistory.ready]);
-  // open/switch a session → jump to the latest (bottom)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally scrolls a newly selected session.
+  // セッションを開く/切り替える → 最新（最下部）へジャンプ
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId は意図的に新しく選択されたセッションへスクロールする。
   React.useLayoutEffect(() => {
     const vp = viewport();
     if (vp && !approvalFocus.state) {
@@ -1457,22 +1470,22 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       atBottomRef.current = true;
     }
   }, [activeId, viewport, approvalFocus.state]);
-  // new activity → stick to bottom only if the user is already pinned there
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activity growth intentionally drives live-edge scrolling.
+  // 新規アクティビティ → ユーザーが既に最下部に固定している場合のみ追従
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activity の増加は意図的にライブエッジへのスクロールを駆動する。
   React.useLayoutEffect(() => {
     if (approvalFocus.state || !atBottomRef.current) return;
     const vp = viewport();
     if (vp) vp.scrollTop = vp.scrollHeight;
   }, [activity, viewport, approvalFocus.state]);
-  // Lazy detail loads (AnswerBlock / ToolBlock / Markdown) grow the content AFTER the
-  // activity array settles, WITHOUT changing its reference — so the layout effects
-  // above never re-fire and a freshly opened session would leave its last message
-  // scrolled partly off-screen (the final answer expands from a one-line summary to
-  // full markdown below the fold). A ResizeObserver re-pins to the bottom on any
-  // height change while the user is still at the bottom, so opening the main agent
-  // lands on the last message fully shown. contentRef's div is always mounted, so the
-  // observer catches the transcript mounting + each detail expanding.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally rebinds the observer to the new session's content.
+  // AnswerBlock / ToolBlock / Markdown の遅延詳細読み込みは、アクティビティ配列が確定した
+  // 後に内容を増やすが、その参照は変えない。そのため上のレイアウトエフェクトは再発火せず、
+  // 開いたばかりのセッションで最後のメッセージが部分的に画面外へスクロールされてしまう
+  // （最終回答が 1 行要約から折り返し下の完全な Markdown へ展開される）。ResizeObserver は、
+  // ユーザーがまだ最下部にいる間、高さの変化のたびに最下部へ再固定する。これによりメイン
+  // Agent を開くと最後のメッセージが完全に表示された状態で着地する。contentRef の div は
+  // 常にマウントされているので、オブザーバーはトランスクリプトのマウントと各詳細の展開を
+  // 捉えられる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId は意図的にオブザーバーを新しいセッションの内容へ再バインドする。
   React.useEffect(() => {
     const el = contentRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -1496,10 +1509,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     const atts = attachments;
     if (side.handleCommand(text, () => setInput(""))) return;
     if ((!text && atts.length === 0) || sending || mainBusy) return;
-    // No optimistic echo: the backend persists+broadcasts the human turn before it
-    // returns, so it streams back over SSE (worker="mainagent") with its real DB
-    // seq — the transcript renders it from server data like every other step. Clear
-    // the composer eagerly for responsiveness; restore it if the send fails.
+    // 楽観的エコーはしない。バックエンドが人間のターンを返す前に永続化 + ブロードキャストする
+    // ため、実際の DB seq を持つ SSE（worker="mainagent"）として返ってくる。トランスクリプトは
+    // 他のあらゆるステップと同様にサーバーデータから描画する。応答性のため入力欄は先に
+    // クリアし、送信に失敗したら元に戻す。
     setInput("");
     setAttachments([]);
     setSending(true);
@@ -1511,9 +1524,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         setMainChatRunning(mode === "llm");
       })
       .catch((e) => {
-        setInput(text); // restore so the user doesn't lose their text / attachments
+        setInput(text); // ユーザーがテキスト/添付を失わないよう復元する
         setAttachments(atts);
-        toast.error(`发送失败：${(e as Error).message || "请稍后重试"}`);
+        toast.error(`送信に失敗しました：${(e as Error).message || "しばらくしてから再試行してください"}`);
       })
       .finally(() => setSending(false));
   }
@@ -1524,7 +1537,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     if (side.handleCommand(message, () => setWorkerMessage(""))) return;
     if (!intentId || active.inherited || active.status !== "paused" || workerMessageSending || !message) return;
     if (workerMessageCharCount(message) > MAX_WORKER_MESSAGE_CHARS) {
-      toast.error(`消息不能超过 ${MAX_WORKER_MESSAGE_CHARS} 个字符`);
+      toast.error(`メッセージは ${MAX_WORKER_MESSAGE_CHARS} 文字以内で入力してください`);
       return;
     }
     const requestId = workerMessageRequestId || newWorkerMessageRequestID();
@@ -1533,23 +1546,23 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     api
       .sendWorkerMessage(taskId, intentId, message, requestId)
       .then((result) => {
-        // The server records the user turn and streams the run over SSE, so there is
-        // no optimistic insert: the message and the continuation arrive live.
+        // サーバーがユーザーのターンを記録し、実行を SSE でストリーミングするため、楽観的な
+        // 挿入は不要。メッセージと継続実行はライブで届く。
         patchIntentState(intentId, result.state);
         setWorkerMessage("");
         setWorkerMessageRequestId("");
-        toast.success(`消息已发送给 Worker #${intentId}，已立即继续执行`);
+        toast.success(`Worker #${intentId} にメッセージを送信しました。即座に実行を再開します`);
       })
       .catch((error) => {
-        toast.error(`发送失败：${(error as Error).message || "请稍后重试"}`);
+        toast.error(`送信に失敗しました：${(error as Error).message || "しばらくしてから再試行してください"}`);
       })
       .finally(() => setWorkerMessageSending(false));
   }
 
   const mainLoaded = !!store[currentMainKey]?.loaded;
-  // 发送键位由系统设置决定（localStorage），默认 Enter 发送。
+  // 送信キーはシステム設定（localStorage）で決まり、既定は Enter 送信。
   const sendMode = useChatSendMode();
-  // What the transcript pane should show for the active session.
+  // アクティブなセッションでトランスクリプトペインに表示すべき内容。
   const showLoader = !activeState || (activeState.loading && !activeState.loaded);
   const resolutionForSession = (session: Session): TaskLLMResolution | undefined => {
     if (!llmResolutions || session.inherited || session.role === "system") return undefined;
@@ -1563,9 +1576,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      {/* 高度预留：页面头部（标题行 + 目标 + Tabs ≈ 7.5rem）+ 内容内边距。手机端 p-4、
-        桌面端 lg:p-6，且桌面还要留出滚动余量，所以两档分别预留 10rem / 13rem —— 手机端
-        沿用 13rem 会白白吃掉 3rem 的记录高度。 */}
+      {/* 高さの予約:ページヘッダー（タイトル行 + ゴール + Tabs ≈ 7.5rem）+ コンテンツの内側余白。
+        モバイルは p-4、デスクトップは lg:p-6 で、デスクトップはスクロール余白も確保するため、
+        2 段階で 10rem / 13rem を予約する。モバイルで 13rem を流用すると 3rem が記録領域を
+        無駄に食ってしまう。 */}
       <div
         className={cn(
           "grid h-[calc(100svh-10rem)] min-h-0 grid-cols-1 gap-4",
@@ -1573,7 +1587,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           "lg:h-[calc(100svh-13rem)] lg:grid-cols-[18rem_1fr] lg:grid-rows-[minmax(0,1fr)]",
         )}
       >
-        {/* Left: session list */}
+        {/* 左:セッション一覧 */}
         <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
           <div className="border-b px-3 py-2">
             <div className="flex items-center justify-between gap-2">
@@ -1587,7 +1601,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 <ChevronDownIcon
                   className={cn("size-3.5 shrink-0 transition-transform lg:hidden", !listOpen && "-rotate-90")}
                 />
-                <span className="shrink-0">会话列表</span>
+                <span className="shrink-0">セッション一覧</span>
                 {!listOpen && (
                   <>
                     <span className="min-w-0 truncate text-foreground lg:hidden" title={activeDisplayTitle}>
@@ -1607,17 +1621,21 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     "inline-flex items-center gap-1 text-[10px]",
                     sseLive ? "text-emerald-500" : "text-amber-500",
                   )}
-                  title={sseLive ? "实时连接正常" : "实时连接中断，正在自动重连（历史仍可见）"}
+                  title={
+                    sseLive
+                      ? "リアルタイム接続は正常です"
+                      : "リアルタイム接続が切断されました。自動再接続中（履歴は引き続き表示可能）"
+                  }
                 >
                   {sseLive ? (
                     <>
                       <span className="size-1 animate-pulse rounded-full bg-emerald-500" />
-                      实时
+                      リアルタイム
                     </>
                   ) : (
                     <>
                       <WifiOffIcon className="size-3" />
-                      重连中
+                      再接続中
                     </>
                   )}
                 </span>
@@ -1627,7 +1645,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                    <span>任务总计</span>
+                    <span>タスク合計</span>
                     <span>·</span>
                     <TokenMetrics
                       input={taskTokens.input_tokens}
@@ -1637,8 +1655,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  输入 {taskTokens.input_tokens.toLocaleString()} · 输出 {taskTokens.output_tokens.toLocaleString()} ·
-                  缓存读取 {taskTokens.cache_read_tokens.toLocaleString()} · 缓存写入{" "}
+                  入力 {taskTokens.input_tokens.toLocaleString()} · 出力 {taskTokens.output_tokens.toLocaleString()} ·
+                  キャッシュ読取 {taskTokens.cache_read_tokens.toLocaleString()} · キャッシュ書込{" "}
                   {taskTokens.cache_write_tokens.toLocaleString()}
                 </TooltipContent>
               </Tooltip>
@@ -1667,8 +1685,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           type="button"
                           onClick={() => setConfirmNewMain(true)}
                           disabled={creatingMain}
-                          title="新建主 Agent 会话（清空上下文，任务状态保留）"
-                          aria-label="新建主 Agent 会话"
+                          title="新しいメイン Agent セッション（コンテキストをクリア、タスク状態は保持）"
+                          aria-label="新しいメイン Agent セッション"
                           className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent/60 hover:text-foreground disabled:opacity-50"
                         >
                           {creatingMain ? (
@@ -1676,7 +1694,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           ) : (
                             <PlusIcon className="size-3.5" />
                           )}
-                          新建
+                          新規
                         </button>
                       )}
                     </div>
@@ -1693,7 +1711,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           onClick={() => {
                             approvalFocus.close();
                             setActiveId(s.id);
-                            setListOpen(false); // 手机端选完即收起，把高度还给会话记录
+                            setListOpen(false); // モバイルでは選択後に折りたたみ、高さを記録領域へ戻す
                             setWorkerMessage("");
                             setWorkerMessageRequestId("");
                           }}
@@ -1717,20 +1735,20 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         ) : (
                           <RotateCwIcon className="size-3.5" />
                         )}
-                        加载更早的 Worker
+                        さらに古い Worker を読み込む
                       </button>
                     )}
                   </div>
                 );
               })}
               {mainLoaded && !workerSessions.length && (
-                <div className="px-2 py-1 text-xs text-muted-foreground">暂无运行中的 Worker 会话。</div>
+                <div className="px-2 py-1 text-xs text-muted-foreground">実行中の Worker セッションはありません。</div>
               )}
             </div>
           </ScrollArea>
         </div>
 
-        {/* Right: transcript */}
+        {/* 右:トランスクリプト */}
         <SideQuestionWorkspace
           side={side}
           label={active.role === "worker" ? `Worker #${active.intent_id} · ${activeDisplayTitle}` : activeDisplayTitle}
@@ -1740,9 +1758,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               {(() => {
                 const isWorker = active.role === "worker";
                 const meta = isWorker ? sessionMeta.get(active.id) : undefined;
-                // Worker: the intent moved into the transcript as a message, so the
-                // header shows a stable generic label (intent JSON stays on hover).
-                const title = isWorker ? "Worker 执行会话" : active.title;
+                // Worker:意図はメッセージとしてトランスクリプトへ移ったため、ヘッダーには
+                // 安定した汎用ラベルを表示する（意図の JSON はホバーで見られる）。
+                const title = isWorker ? "Worker 実行セッション" : active.title;
                 const titleEl = <span className="min-w-0 truncate text-sm font-medium">{title}</span>;
                 return meta?.json ? (
                   <Tooltip>
@@ -1763,40 +1781,43 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       variant="outline"
                       className="max-w-28 shrink-0 font-normal"
                       aria-label={
-                        activeResolution.available ? `当前配置：${resolutionLabel(activeResolution)}` : "模型不可用"
+                        activeResolution.available
+                          ? `現在の設定：${resolutionLabel(activeResolution)}`
+                          : "モデル利用不可"
                       }
                     >
                       <span className="truncate">
-                        {activeResolution.available ? resolutionLabel(activeResolution) : "模型不可用"}
+                        {activeResolution.available ? resolutionLabel(activeResolution) : "モデル利用不可"}
                       </span>
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-xs [overflow-wrap:anywhere]">
                     {activeResolution.available
                       ? [resolutionLabel(activeResolution), activeResolution.model].filter(Boolean).join(" / ")
-                      : activeResolution.reason || "没有可用的 LLM 配置"}
+                      : activeResolution.reason || "利用可能な LLM 設定がありません"}
                   </TooltipContent>
                 </Tooltip>
               )}
               {activeAssets && activeAssets.length > 0 && <WorkerAssetBadge assets={activeAssets} />}
               {active.inherited && active.source_task_id && (
-                <Badge variant="outline">来源任务 #{active.source_task_id} · 只读历史</Badge>
+                <Badge variant="outline">ソースタスク #{active.source_task_id} · 読み取り専用の履歴</Badge>
               )}
               {active.live && (
                 <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
                   <span className="size-1 animate-pulse rounded-full bg-blue-500" />
-                  实时
+                  リアルタイム
                 </span>
               )}
               {activeState?.hasMore && (
-                <span className="text-[10px] text-muted-foreground" title="向上滚动加载更早历史">
-                  ↑ 更早历史
+                <span className="text-[10px] text-muted-foreground" title="上へスクロールすると古い履歴を読み込みます">
+                  ↑ 過去の履歴
                 </span>
               )}
               <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground max-sm:w-full max-sm:flex-wrap">
                 {tokenTotal.any && (
                   <Tooltip>
-                    {/* 手机端用短标签（入/缓/出）：长标签会把这一行撑成两行，进一步压缩记录区。 */}
+                    {/* モバイルでは短いラベル（入/キ/出）を使う。長いラベルだとこの行が 2 行になり、
+                    記録領域がさらに圧迫されるため。 */}
                     <TooltipTrigger asChild>
                       <span className="inline-flex min-w-0 items-center">
                         <TokenMetrics
@@ -1816,20 +1837,20 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      输入 {activeTokens.input_tokens.toLocaleString()} · 输出{" "}
-                      {activeTokens.output_tokens.toLocaleString()} · 缓存读取{" "}
-                      {activeTokens.cache_read_tokens.toLocaleString()} · 缓存写入{" "}
+                      入力 {activeTokens.input_tokens.toLocaleString()} · 出力{" "}
+                      {activeTokens.output_tokens.toLocaleString()} · キャッシュ読取{" "}
+                      {activeTokens.cache_read_tokens.toLocaleString()} · キャッシュ書込{" "}
                       {activeTokens.cache_write_tokens.toLocaleString()}
                     </TooltipContent>
                   </Tooltip>
                 )}
                 {runDuration != null && (
-                  <span className="inline-flex items-center gap-1" title="运行时长（首步 → 末步）">
+                  <span className="inline-flex items-center gap-1" title="実行時間（最初のステップ → 最後のステップ）">
                     <ClockIcon className="size-3" />
                     {fmtDuration(runDuration)}
                   </span>
                 )}
-                {isMain && <span>可交互</span>}
+                {isMain && <span>対話可能</span>}
               </div>
             </div>
             {(() => {
@@ -1839,13 +1860,13 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 <div className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs">
                   <Trash2Icon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
                   <div className="min-w-0">
-                    <span className="font-medium text-destructive">此意图已被用户删除</span>
+                    <span className="font-medium text-destructive">この意図はユーザーにより削除されました</span>
                     <span className="text-muted-foreground">
-                      （已停止执行，规划者已收到通知；意图与产出保留，可在下方查看历史）
+                      （実行は停止済みで、プランナーに通知済み。意図と成果は保持されており、下で履歴を確認できます）
                     </span>
                     {dm.deleteReason && (
                       <p className="mt-1 break-words text-foreground">
-                        <span className="text-muted-foreground">删除原因：</span>
+                        <span className="text-muted-foreground">削除理由：</span>
                         {dm.deleteReason}
                       </p>
                     )}
@@ -1863,34 +1884,34 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               }}
               history={focusHistory}
             />
-            {/* Force Radix's internal viewport wrapper (display:table, sizes to content)
-            to block so wide/unbreakable steps (long commands, code, URLs) can't blow
-            out the width and defeat the truncation below — the transcript wraps to
-            the panel instead of overflowing horizontally. */}
+            {/* Radix 内部の viewport ラッパー（display:table で内容に合わせてサイズ調整）を
+            強制的に block にする。これにより幅が広く改行不能なステップ（長いコマンド、コード、
+            URL）でも幅を押し広げて下の切り詰めを無効化できない — トランスクリプトは水平に
+            はみ出さずパネル幅で折り返す。 */}
             <ScrollArea type="auto" className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
               <div className="min-w-0 max-w-full p-4" ref={contentRef}>
                 {activeState?.loadingMore && (
                   <div className="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground">
                     <Loader2Icon className="size-3.5 animate-spin" />
-                    加载更早历史…
+                    過去の履歴を読み込み中…
                   </div>
                 )}
                 {showLoader ? (
                   <div className="flex items-center gap-2 pl-9 text-xs text-muted-foreground">
                     <Loader2Icon className="size-3.5 animate-spin" />
-                    加载活动流…
+                    アクティビティストリームを読み込み中…
                   </div>
                 ) : activeState?.error ? (
                   <div className="flex items-center gap-2 pl-9 text-xs text-red-500">
                     <CircleXIcon className="size-3.5" />
-                    加载失败：{activeState.error}
+                    読み込みに失敗しました：{activeState.error}
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-6 px-2 text-xs"
                       onClick={() => loadSession(activeKey)}
                     >
-                      重试
+                      再試行
                     </Button>
                   </div>
                 ) : activity.length ? (
@@ -1903,7 +1924,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   />
                 ) : (
                   <div className="pl-9 text-xs text-muted-foreground">
-                    {isMain ? "还没有对话。在下方给主 Agent 发消息，引导探索方向或介入流程。" : "暂无活动记录。"}
+                    {isMain
+                      ? "まだ会話がありません。下でメイン Agent にメッセージを送り、探索の方向を導いたり、フローに介入したりできます。"
+                      : "アクティビティ記録はまだありません。"}
                   </div>
                 )}
               </div>
@@ -1925,7 +1948,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           type="button"
                           className="ml-0.5 text-muted-foreground hover:text-foreground"
                           onClick={() => setAttachments((p) => p.filter((x) => x.path !== a.path))}
-                          title="移除"
+                          title="削除"
                         >
                           <XIcon className="size-3" />
                         </button>
@@ -1944,9 +1967,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   <MentionTextarea
                     inputGroup
                     rows={1}
-                    aria-label="给主 Agent 发消息"
+                    aria-label="メイン Agent にメッセージを送信"
                     placeholder={
-                      mainBusy ? "主 Agent 正在运行，可输入 /btw 提问…" : "给主 Agent 发消息，@ 引用漏洞、资产等…"
+                      mainBusy
+                        ? "メイン Agent が実行中です。/btw で質問できます…"
+                        : "メイン Agent にメッセージを送信。@ で脆弱性や資産などを参照できます…"
                     }
                     value={input}
                     disabled={sending}
@@ -1964,13 +1989,13 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       variant="ghost"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={mainBusy || uploading}
-                      title="上传文件"
-                      aria-label="上传文件"
+                      title="ファイルをアップロード"
+                      aria-label="ファイルをアップロード"
                     >
                       {uploading ? <Loader2Icon className="animate-spin" /> : <PaperclipIcon />}
                     </InputGroupButton>
                     {mainBusy && isBtwCommand(input) && (
-                      <InputGroupButton size="icon-xs" onClick={send} aria-label="发送旁路问题">
+                      <InputGroupButton size="icon-xs" onClick={send} aria-label="サイド質問を送信">
                         <ArrowUpIcon />
                       </InputGroupButton>
                     )}
@@ -1981,8 +2006,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         variant="destructive"
                         onClick={stop}
                         disabled={stopping}
-                        title="停止当前执行"
-                        aria-label="停止当前执行"
+                        title="現在の実行を停止"
+                        aria-label="現在の実行を停止"
                       >
                         {stopping ? <Loader2Icon className="animate-spin" /> : <SquareIcon />}
                       </InputGroupButton>
@@ -1993,8 +2018,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         variant="default"
                         onClick={send}
                         disabled={(!input.trim() && attachments.length === 0) || sending}
-                        title="发送消息"
-                        aria-label="发送消息"
+                        title="メッセージを送信"
+                        aria-label="メッセージを送信"
                       >
                         {sending ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
                       </InputGroupButton>
@@ -2010,8 +2035,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   <MentionTextarea
                     inputGroup
                     rows={1}
-                    aria-label={`给 Worker #${active.intent_id} 发消息`}
-                    placeholder={`给 Worker #${active.intent_id} 发消息，@ 引用记录，调整执行方向…`}
+                    aria-label={`Worker #${active.intent_id} にメッセージを送信`}
+                    placeholder={`Worker #${active.intent_id} にメッセージを送信。@ で記録を参照し、実行方針を調整…`}
                     value={workerMessage}
                     onValueChange={(value) => {
                       setWorkerMessage(value);
@@ -2036,7 +2061,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                       {workerMessageCharCount(workerMessage)}/{MAX_WORKER_MESSAGE_CHARS}
                     </span>
                     {active.status === "running" && isBtwCommand(workerMessage) && (
-                      <InputGroupButton size="icon-xs" onClick={sendWorkerChat} aria-label="发送旁路问题">
+                      <InputGroupButton size="icon-xs" onClick={sendWorkerChat} aria-label="サイド質問を送信">
                         <ArrowUpIcon />
                       </InputGroupButton>
                     )}
@@ -2047,8 +2072,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                         variant="destructive"
                         onClick={() => void controlWorker(active, "pause")}
                         disabled={controllingIntent === active.intent_id}
-                        title="暂停当前 Worker"
-                        aria-label="暂停当前 Worker"
+                        title="現在の Worker を一時停止"
+                        aria-label="現在の Worker を一時停止"
                       >
                         {controllingIntent === active.intent_id ? (
                           <Loader2Icon className="animate-spin" />
@@ -2064,13 +2089,13 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                           variant="ghost"
                           onClick={() => void controlWorker(active, "resume")}
                           disabled={controllingIntent === active.intent_id || workerMessageSending}
-                          title="不发消息，直接继续执行"
-                          aria-label="直接继续执行"
+                          title="メッセージなしで実行を継続"
+                          aria-label="メッセージなしで実行を継続"
                         >
                           {controllingIntent === active.intent_id ? (
                             <Loader2Icon className="animate-spin" />
                           ) : (
-                            "直接继续"
+                            "そのまま継続"
                           )}
                         </InputGroupButton>
                         <InputGroupButton
@@ -2082,8 +2107,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                             !workerMessage.trim() ||
                             workerMessageCharCount(workerMessage) > MAX_WORKER_MESSAGE_CHARS
                           }
-                          title="发送消息"
-                          aria-label="发送消息"
+                          title="メッセージを送信"
+                          aria-label="メッセージを送信"
                         >
                           {workerMessageSending ? <Spinner /> : <ArrowUpIcon />}
                         </InputGroupButton>
@@ -2114,18 +2139,22 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         >
           <AlertDialogContent className="max-w-[min(32rem,calc(100vw-2rem))]">
             <AlertDialogHeader>
-              <AlertDialogTitle>删除 Worker #{cancelIntent?.intent_id}？</AlertDialogTitle>
+              <AlertDialogTitle>Worker #{cancelIntent?.intent_id} を削除しますか？</AlertDialogTitle>
               <AlertDialogDescription className="break-words whitespace-normal">
                 {deleteMode === "hard" ? (
                   <>
-                    <strong>真删除</strong>会物理移除该意图，以及<strong>仅由它支撑</strong>
-                    的下游节点（级联到叶子，避免留下孤立数据）；共享节点、目标和任务根事实会保留。
-                    <strong>此操作不可恢复。</strong>规划者会收到删除通知并据此重新规划。
+                    <strong>完全削除</strong>は、この意図と、<strong>それだけに支えられた</strong>
+                    下流ノードを物理的に削除します（リーフまでカスケードし、孤立データを残しません）。
+                    共有ノード、ゴール、タスクのルート事実は保持されます。
+                    <strong>この操作は元に戻せません。</strong>
+                    プランナーは削除通知を受け取り、それに基づいて再計画します。
                   </>
                 ) : (
                   <>
-                    <strong>假删除</strong>会把该意图置为「已删除」并记录删除原因，意图节点、执行记录、
-                    已登记的事实和漏洞<strong>都会保留</strong>。规划者会收到「该意图由用户删除 + 原因」并据此重新规划。
+                    <strong>ソフト削除</strong>
+                    はこの意図を「削除済み」にし、削除理由を記録します。意図ノード、実行記録、 登録済みの事実と脆弱性は
+                    <strong>すべて保持されます</strong>。プランナーは「この意図はユーザーにより削除 +
+                    理由」を受け取り、それに基づいて再計画します。
                   </>
                 )}
               </AlertDialogDescription>
@@ -2140,8 +2169,8 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     deleteMode === "soft" ? "border-primary bg-primary/5" : "hover:bg-accent",
                   )}
                 >
-                  <div className="font-medium">假删除</div>
-                  <div className="text-xs text-muted-foreground">保留数据，可追溯</div>
+                  <div className="font-medium">ソフト削除</div>
+                  <div className="text-xs text-muted-foreground">データを保持し、追跡可能</div>
                 </button>
                 <button
                   type="button"
@@ -2151,33 +2180,33 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                     deleteMode === "hard" ? "border-destructive bg-destructive/5" : "hover:bg-accent",
                   )}
                 >
-                  <div className="font-medium">真删除</div>
-                  <div className="text-xs text-muted-foreground">级联移除，不可恢复</div>
+                  <div className="font-medium">完全削除</div>
+                  <div className="text-xs text-muted-foreground">カスケード削除、復元不可</div>
                 </button>
               </div>
               <div className="grid gap-2">
                 <label htmlFor="cancel-reason" className="text-sm font-medium">
-                  删除原因（必填）
+                  削除理由（必須）
                 </label>
                 <Textarea
                   id="cancel-reason"
                   value={cancelReason}
                   onChange={(e) => setCancelReason(e.target.value)}
-                  placeholder="说明为什么删除这条意图，例如：方向判断错误 / 目标已失效 / 与其他意图重复…"
+                  placeholder="この意図を削除する理由を記入してください。例:方向判断の誤り / ゴールが無効になった / 他の意図と重複…"
                   rows={3}
                   autoFocus
                 />
               </div>
             </div>
             <AlertDialogFooter>
-              <AlertDialogCancel>返回</AlertDialogCancel>
+              <AlertDialogCancel>戻る</AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
                 disabled={!cancelIntent || controllingIntent !== null || !cancelReason.trim()}
                 onClick={() => cancelIntent && void controlWorker(cancelIntent, "cancel", cancelReason, deleteMode)}
               >
                 {controllingIntent ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
-                {deleteMode === "hard" ? "彻底删除" : "确认删除"}
+                {deleteMode === "hard" ? "完全削除する" : "削除を確認"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -2186,15 +2215,16 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         <AlertDialog open={confirmNewMain} onOpenChange={(open) => !open && setConfirmNewMain(false)}>
           <AlertDialogContent className="max-w-[min(32rem,calc(100vw-2rem))]">
             <AlertDialogHeader>
-              <AlertDialogTitle>开启新会话？</AlertDialogTitle>
+              <AlertDialogTitle>新しいセッションを開始しますか？</AlertDialogTitle>
               <AlertDialogDescription className="break-words whitespace-normal">
-                当前会话会被归档（可随时切回），主 Agent 将以干净的上下文继续。任务的图谱、资产、目标不受影响。
+                現在のセッションはアーカイブされ（いつでも切り替え可能）、メイン Agent
+                はクリーンなコンテキストで続行します。タスクのグラフ、資産、ゴールは影響を受けません。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={creatingMain}>取消</AlertDialogCancel>
+              <AlertDialogCancel disabled={creatingMain}>キャンセル</AlertDialogCancel>
               <AlertDialogAction disabled={creatingMain} onClick={() => void createMainSession()}>
-                {creatingMain ? "开启中…" : "开启新会话"}
+                {creatingMain ? "開始中…" : "新しいセッションを開始"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

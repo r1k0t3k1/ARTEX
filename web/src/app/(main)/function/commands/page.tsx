@@ -26,8 +26,8 @@ function fmtTime(ts: string) {
   });
 }
 
-// toolInput renders a tool's raw input for display. Bash's {"command":"..."} is
-// unwrapped to the bare command; other tools show their pretty-printed JSON args.
+// toolInput はツールの生入力を表示用に整形する。Bash の {"command":"..."} は
+// コマンド本体だけを取り出し、それ以外のツールは整形済み JSON 引数を表示する。
 function toolInput(raw: string): string {
   try {
     const obj = JSON.parse(raw);
@@ -39,9 +39,9 @@ function toolInput(raw: string): string {
   return raw;
 }
 
-// truncate clips a string to maxLen characters.
+// truncate は文字列を maxLen 文字に切り詰める。
 function truncate(s: string, maxLen: number): string {
-  const first = s.split("\n")[0]; // single-line preview
+  const first = s.split("\n")[0]; // 1 行プレビュー
   if (first.length <= maxLen) return first;
   return first.slice(0, maxLen) + "…";
 }
@@ -60,27 +60,27 @@ export default function CommandsPage() {
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
 
-  // 各工具调用次数。弹窗打开时才拉取（多一次聚合查询，不必每次翻页都付）。
+  // 各ツールの呼び出し回数。ダイアログを開いたときだけ取得する(集計クエリが 1 回増えるため、ページ送りのたびに払う必要はない)。
   const [statsOpen, setStatsOpen] = React.useState(false);
   const [stats, setStats] = React.useState<ToolStat[]>([]);
   const [statsLoading, setStatsLoading] = React.useState(false);
 
-  // Selected execution is rendered in a right-side detail sheet.
+  // 選択した実行は右側の詳細シートに表示する。
   const [selected, setSelected] = React.useState<CommandRecord | null>(null);
 
-  // Debounce search input.
+  // 検索入力のデバウンス。
   React.useEffect(() => {
     const t = setTimeout(() => setQueryQ(query.trim()), 300);
     return () => clearTimeout(t);
   }, [query]);
 
-  // Reset page on filter change.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: every filter change intentionally resets pagination.
+  // フィルタ変更時はページをリセットする。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: どのフィルタ変更でも意図的にページ送りをリセットする。
   React.useEffect(() => {
     setPage(0);
   }, [queryQ, taskFilter, size]);
 
-  // Load data.
+  // データを読み込む。
   React.useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -102,7 +102,7 @@ export default function CommandsPage() {
     };
   }, [page, size, queryQ, taskFilter]);
 
-  // 统计跟随筛选条件走，和表格描述的是同一批记录（但不分页）。
+  // 統計はフィルタ条件に追従し、テーブルが扱うのと同じレコード集合を対象にする(ただしページ送りはしない)。
   React.useEffect(() => {
     if (!statsOpen) return;
     let alive = true;
@@ -126,28 +126,28 @@ export default function CommandsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* Header */}
+      {/* ヘッダー */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <TerminalIcon className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-xl font-semibold tracking-tight">工具执行</h1>
+          <h1 className="text-xl font-semibold tracking-tight">ツール実行</h1>
           <Badge variant="secondary">{total}</Badge>
         </div>
       </div>
 
-      {/* Toolbar */}
+      {/* ツールバー */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative max-w-sm flex-1">
           <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="搜索工具 / 参数..."
+            placeholder="ツール / パラメータを検索..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="h-8 pl-8"
           />
         </div>
         <Input
-          placeholder="任务 ID"
+          placeholder="タスク ID"
           className="h-8 w-28"
           value={taskFilter}
           onChange={(e) => setTaskFilter(e.target.value.replace(/\D/g, ""))}
@@ -159,7 +159,7 @@ export default function CommandsPage() {
           <SelectContent>
             {PAGE_SIZES.map((n) => (
               <SelectItem key={n} value={String(n)}>
-                {n} / 页
+                {n} / ページ
               </SelectItem>
             ))}
           </SelectContent>
@@ -167,7 +167,7 @@ export default function CommandsPage() {
 
         <Button variant="outline" size="sm" className="h-8" onClick={() => setStatsOpen(true)}>
           <BarChart3Icon className="size-4" />
-          统计
+          統計
         </Button>
 
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
@@ -198,19 +198,19 @@ export default function CommandsPage() {
         </div>
       </div>
 
-      {/* History table */}
+      {/* 履歴テーブル */}
       <div className="flex h-[calc(100vh-13rem)] min-h-0 flex-col">
         <Card className="flex min-h-0 flex-1 flex-col overflow-hidden py-0">
           <div className="min-h-0 flex-1 overflow-auto">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-card">
                 <TableRow>
-                  <TableHead className="w-[130px]">时间</TableHead>
-                  <TableHead className="w-[60px]">任务</TableHead>
+                  <TableHead className="w-[130px]">時刻</TableHead>
+                  <TableHead className="w-[60px]">タスク</TableHead>
                   <TableHead className="w-[90px]">Worker</TableHead>
-                  <TableHead className="w-[110px]">工具</TableHead>
-                  <TableHead>输入</TableHead>
-                  <TableHead className="w-[60px]">状态</TableHead>
+                  <TableHead className="w-[110px]">ツール</TableHead>
+                  <TableHead>入力</TableHead>
+                  <TableHead className="w-[60px]">ステータス</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -223,7 +223,7 @@ export default function CommandsPage() {
                 ) : commands.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
-                      暂无工具执行记录
+                      ツール実行の記録はまだありません
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -255,7 +255,7 @@ export default function CommandsPage() {
                       <TableCell>
                         {cmd.is_error ? (
                           <Badge variant="destructive" className="text-xs">
-                            失败
+                            失敗
                           </Badge>
                         ) : (
                           <Badge variant="secondary" className="text-xs text-emerald-600">
@@ -272,21 +272,21 @@ export default function CommandsPage() {
         </Card>
       </div>
 
-      {/* 工具调用统计：与表格同一批记录（同筛选、不分页） */}
+      {/* ツール呼び出し統計:テーブルと同じレコード集合(同じフィルタ、ページ送りなし) */}
       <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>工具调用统计</DialogTitle>
+            <DialogTitle>ツール呼び出し統計</DialogTitle>
             <DialogDescription>
-              {taskFilter || queryQ ? "当前筛选条件下的全部记录" : "全部工具执行记录"}
+              {taskFilter || queryQ ? "現在のフィルタ条件に一致するすべてのレコード" : "すべてのツール実行記録"}
               {stats.length > 0 && (
                 <>
                   {" · "}
-                  <span className="tabular-nums">{stats.length}</span> 个工具 ·{" "}
-                  <span className="tabular-nums">{statsTotal}</span> 次调用
+                  <span className="tabular-nums">{stats.length}</span> 種のツール ·{" "}
+                  <span className="tabular-nums">{statsTotal}</span> 回の呼び出し
                   {statsErrors > 0 && (
                     <>
-                      {" · 失败 "}
+                      {" · 失敗 "}
                       <span className="tabular-nums text-red-600 dark:text-red-400">{statsErrors}</span>
                     </>
                   )}
@@ -300,7 +300,7 @@ export default function CommandsPage() {
               <Loader2Icon className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : stats.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无统计数据</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">統計データはまだありません</div>
           ) : (
             <div className="-mr-2 max-h-[55vh] space-y-1 overflow-auto pr-2">
               {stats.map((s) => (
@@ -309,7 +309,7 @@ export default function CommandsPage() {
                     <div className="flex items-center gap-2">
                       <span className="truncate font-mono text-xs font-medium">{s.tool}</span>
                       {s.errors > 0 && (
-                        <span className="text-[11px] tabular-nums text-red-600 dark:text-red-400">失败 {s.errors}</span>
+                        <span className="text-[11px] tabular-nums text-red-600 dark:text-red-400">失敗 {s.errors}</span>
                       )}
                     </div>
                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -337,7 +337,7 @@ export default function CommandsPage() {
           {selected && (
             <>
               <SheetHeader className="border-b px-5 py-4">
-                <SheetTitle className="pr-8">工具执行详情</SheetTitle>
+                <SheetTitle className="pr-8">ツール実行の詳細</SheetTitle>
                 <SheetDescription>{fmtTime(selected.created_at)}</SheetDescription>
                 <div className="flex flex-wrap items-center gap-2 pt-2">
                   <Badge variant="outline" className="text-xs font-mono">
@@ -351,7 +351,7 @@ export default function CommandsPage() {
                   </Badge>
                   {selected.is_error ? (
                     <Badge variant="destructive" className="text-xs">
-                      失败
+                      失敗
                     </Badge>
                   ) : (
                     <Badge variant="secondary" className="text-xs text-emerald-600">
@@ -362,7 +362,7 @@ export default function CommandsPage() {
               </SheetHeader>
               <div className="grid min-h-0 flex-1 grid-rows-2 divide-y">
                 <div className="flex min-h-0 min-w-0 flex-col">
-                  <div className="border-b px-5 py-2 text-xs font-medium text-muted-foreground">输入 Input</div>
+                  <div className="border-b px-5 py-2 text-xs font-medium text-muted-foreground">入力 Input</div>
                   <div className="min-h-0 flex-1 overflow-auto">
                     <pre className="p-5 font-mono text-xs break-all whitespace-pre-wrap">
                       {toolInput(selected.command)}
@@ -370,7 +370,7 @@ export default function CommandsPage() {
                   </div>
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-col">
-                  <div className="border-b px-5 py-2 text-xs font-medium text-muted-foreground">输出 Output</div>
+                  <div className="border-b px-5 py-2 text-xs font-medium text-muted-foreground">出力 Output</div>
                   <div className="min-h-0 flex-1 overflow-auto">
                     <pre
                       className={cn(

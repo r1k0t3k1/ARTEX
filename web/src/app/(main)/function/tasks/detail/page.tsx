@@ -51,16 +51,16 @@ import { RetestsTab } from "./_tabs/retests-tab";
 import { SessionsTab } from "./_tabs/sessions-tab";
 
 const TABS = [
-  { value: "sessions", label: "会话" },
-  { value: "overview", label: "总览" },
-  { value: "graph", label: "探索链路" },
-  { value: "broadcast", label: "播报板" },
-  { value: "findings", label: "发现" },
-  { value: "retests", label: "复测" },
-  { value: "assets", label: "测试资产" },
-  { value: "coverage", label: "资产覆盖图" },
-  { value: "intercept", label: "拦截审批" },
-  { value: "report", label: "报告" },
+  { value: "sessions", label: "セッション" },
+  { value: "overview", label: "概要" },
+  { value: "graph", label: "探索チェーン" },
+  { value: "broadcast", label: "ブロードキャストボード" },
+  { value: "findings", label: "検出結果" },
+  { value: "retests", label: "再検証" },
+  { value: "assets", label: "テスト資産" },
+  { value: "coverage", label: "資産カバレッジ図" },
+  { value: "intercept", label: "インターセプト承認" },
+  { value: "report", label: "レポート" },
 ];
 
 function taskProfileIDs(task: Task): string[] {
@@ -81,28 +81,29 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
 
   const chain = taskProfileIDs(task);
   const exhausted = task.llm_failover_state === "chain_exhausted";
-  // 任何状态都可以改链,终态也不例外:任务结束后主 Agent 对话仍走这条链,
-  // 链上模型出问题时必须能换掉,否则已完成任务就没法继续交互。
+  // どの状態でもチェーンは変更できる(終端状態も例外ではない)。タスク終了後もメイン Agent の対話は
+  // このチェーンを使うため、チェーン上のモデルに問題が起きたときは差し替えられなければ、
+  // 完了済みタスクで対話を続けられなくなる。
   const terminal = ["done", "failed", "timeout"].includes(task.status);
-  // A null active profile on an exhausted, non-empty chain is a persisted end
-  // cursor. Keep the status display honest; choosing the first profile is only
-  // the editor's reset draft and does not mean it is currently active.
+  // 枯渇した空でないチェーンで active profile が null なのは、永続化された終端カーソルである。
+  // ステータス表示は正確に保つ。先頭プロファイルの選択はエディタのリセット用ドラフトにすぎず、
+  // 現在アクティブという意味ではない。
   let activeID = chain[0] ?? "";
   if (exhausted) activeID = "";
   if (task.active_llm_profile_id) activeID = String(task.active_llm_profile_id);
   const activeProfile = profiles.find((profile) => profile.id === activeID);
   const currentLabel = exhausted
-    ? "配置链已耗尽"
-    : (activeProfile?.name ?? (activeID ? `配置 #${activeID}` : "跟随默认配置"));
+    ? "設定チェーンが枯渇"
+    : (activeProfile?.name ?? (activeID ? `設定 #${activeID}` : "既定設定に従う"));
   const activeIndex = chain.indexOf(activeID);
   const backupCount = activeIndex >= 0 ? Math.max(0, chain.length - activeIndex - 1) : 0;
-  const currentTitle = [currentLabel, activeProfile?.model, backupCount > 0 ? `${backupCount} 个备用` : ""]
+  const currentTitle = [currentLabel, activeProfile?.model, backupCount > 0 ? `${backupCount} 件のバックアップ` : ""]
     .filter(Boolean)
     .join(" · ");
-  let editorDescription = "调整顺序或当前配置后，将从下一次 LLM 调用开始生效。";
-  if (terminal) editorDescription = "任务已结束，改动只影响后续的主 Agent 对话。";
+  let editorDescription = "順序または現在の設定を変更すると、次回の LLM 呼び出しから反映されます。";
+  if (terminal) editorDescription = "タスクは終了済みです。変更は以降のメイン Agent との対話にのみ影響します。";
   let saveLabel = "保存";
-  if (exhausted) saveLabel = "保存并重置";
+  if (exhausted) saveLabel = "保存してリセット";
   if (saving) saveLabel = "保存中";
 
   const syncDraft = React.useCallback(() => {
@@ -134,14 +135,14 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
       } else {
         toast.success(
           result.reopened_intents > 0
-            ? `LLM 配置已更新，并恢复 ${result.reopened_intents} 条额度阻塞意图`
-            : "LLM 配置已更新",
+            ? `LLM 設定を更新し、クォータでブロックされていた意図を ${result.reopened_intents} 件復帰させました`
+            : "LLM 設定を更新しました",
         );
       }
       setOpen(false);
       onUpdated();
     } catch (error) {
-      toast.error("更新失败：" + (error as Error).message);
+      toast.error("更新に失敗しました：" + (error as Error).message);
     } finally {
       setSaving(false);
     }
@@ -153,7 +154,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
         <Button
           size="sm"
           variant={exhausted ? "destructive" : "outline"}
-          aria-label="查看或切换任务 LLM 配置"
+          aria-label="タスクの LLM 設定を表示または切り替え"
           title={currentTitle}
         >
           <BrainIcon data-icon="inline-start" />
@@ -163,16 +164,17 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
       </PopoverTrigger>
       <PopoverContent ref={popoverContentRef} align="start" className="w-[min(28rem,calc(100vw-2rem))] gap-4 p-4">
         <PopoverHeader>
-          <PopoverTitle>任务 LLM 配置链</PopoverTitle>
+          <PopoverTitle>タスクの LLM 設定チェーン</PopoverTitle>
           <PopoverDescription>{editorDescription}</PopoverDescription>
         </PopoverHeader>
 
         {exhausted && (
           <Alert variant="destructive">
             <CircleAlertIcon />
-            <AlertTitle>配置链额度已耗尽</AlertTitle>
+            <AlertTitle>設定チェーンのクォータが枯渇しました</AlertTitle>
             <AlertDescription>
-              {task.llm_failover_reason ?? "所有已选配置均被判定为额度不足。保存配置链可重置故障状态。"}
+              {task.llm_failover_reason ??
+                "選択したすべての設定がクォータ不足と判定されました。設定チェーンを保存すると障害状態をリセットできます。"}
             </AlertDescription>
           </Alert>
         )}
@@ -190,7 +192,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>
-            关闭
+            閉じる
           </Button>
           <Button type="button" size="sm" onClick={save} disabled={saving}>
             {saving && <Spinner data-icon="inline-start" />}
@@ -230,7 +232,7 @@ function TaskDetailInner() {
           if (alive) setInterceptPendingCount(rows.filter((r) => r.status === "pending").length);
         })
         .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+          // ポーリングはベストエフォート。次のインターバルで自動的に再試行する。
         });
     void load();
     const t = setInterval(load, 5000);
@@ -260,7 +262,7 @@ function TaskDetailInner() {
         setPaused(at?.paused ?? base.paused ?? false);
       })
       .catch(() => {
-        // Keep the last rendered task state during a transient poll failure.
+        // 一時的なポーリング失敗の間は最後に描画したタスク状態を保持する。
       })
       .finally(() => {
         if (taskLoadInFlight.current === id) {
@@ -281,9 +283,9 @@ function TaskDetailInner() {
     try {
       await api.controlTask(id, next ? "pause" : "resume");
       setPaused(next);
-      toast.success(next ? "已暂停探索" : "已恢复探索");
+      toast.success(next ? "探索を一時停止しました" : "探索を再開しました");
     } catch (e) {
-      toast.error("操作失败：" + (e as Error).message);
+      toast.error("操作に失敗しました：" + (e as Error).message);
     }
   }
 
@@ -292,10 +294,10 @@ function TaskDetailInner() {
     setArchiving(true);
     try {
       await api.archiveTask(task.id);
-      toast.success("任务已加入归档队列");
+      toast.success("タスクをアーカイブキューに追加しました");
       router.push("/function/tasks");
     } catch (error) {
-      toast.error(`归档失败：${(error as Error).message}`);
+      toast.error(`アーカイブに失敗しました：${(error as Error).message}`);
       setArchiving(false);
     }
   }
@@ -303,11 +305,13 @@ function TaskDetailInner() {
   if (!task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
-        <p className="text-muted-foreground">{loaded ? `任务 ${id} 已被删除、归档或不存在` : "加载中…"}</p>
+        <p className="text-muted-foreground">
+          {loaded ? `タスク ${id} は削除済み、アーカイブ済み、または存在しません` : "読み込み中…"}
+        </p>
         {loaded && (
           <Button asChild variant="outline">
             <Link href="/function/tasks">
-              <ArrowLeftIcon /> 返回任务列表
+              <ArrowLeftIcon /> タスク一覧に戻る
             </Link>
           </Button>
         )}
@@ -319,29 +323,31 @@ function TaskDetailInner() {
   const terminal = ["done", "failed", "timeout"].includes(task.status);
   const archiveLifecycleEligible = terminal || paused || task.status === "paused";
   const canArchive = archiveLifecycleEligible && !task.archive_blocked_by_task_id;
-  let archiveDisabledReason = task.queued ? "排队中的任务必须先暂停" : "运行中的任务必须先暂停";
+  let archiveDisabledReason = task.queued
+    ? "キュー待ちのタスクは先に一時停止する必要があります"
+    : "実行中のタスクは先に一時停止する必要があります";
   if (archiveLifecycleEligible && task.archive_blocked_by_task_id) {
-    archiveDisabledReason = `任务被未归档任务 #${task.archive_blocked_by_task_id} 直接继承，请先归档依赖任务`;
+    archiveDisabledReason = `タスクは未アーカイブのタスク #${task.archive_blocked_by_task_id} に直接継承されているため、先に依存タスクをアーカイブしてください`;
   }
   const engineMode = paused ? "paused" : (task.engine_mode ?? "idle");
   let controlVariant: "default" | "secondary" | "outline" = "outline";
   let controlIcon = <PauseIcon data-icon="inline-start" />;
-  let controlLabel = "暂停";
+  let controlLabel = "一時停止";
   if (terminal) {
     controlVariant = "secondary";
     controlIcon = <CheckIcon data-icon="inline-start" />;
-    controlLabel = completed ? "已完成" : "已结束";
+    controlLabel = completed ? "完了済み" : "終了済み";
   } else if (paused) {
     controlVariant = "default";
     controlIcon = <PlayIcon data-icon="inline-start" />;
-    controlLabel = "恢复";
+    controlLabel = "再開";
   }
   const archiveTrigger = (
     <Button
       size="icon-sm"
       variant="ghost"
       disabled={!canArchive || archiving}
-      aria-label={canArchive ? "归档任务" : archiveDisabledReason}
+      aria-label={canArchive ? "タスクをアーカイブ" : archiveDisabledReason}
     >
       {archiving ? <Spinner /> : <ArchiveIcon />}
     </Button>
@@ -349,7 +355,7 @@ function TaskDetailInner() {
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-0">
-      {/* Top fixed area */}
+      {/* 上部の固定領域 */}
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex items-center gap-2">
           <SidebarTrigger className="-ml-1" />
@@ -372,15 +378,15 @@ function TaskDetailInner() {
               <AlertDialogTrigger asChild>{archiveTrigger}</AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>归档任务 #{task.id}？</AlertDialogTitle>
+                  <AlertDialogTitle>タスク #{task.id} をアーカイブしますか？</AlertDialogTitle>
                   <AlertDialogDescription>
-                    任务图谱、关联记录、独占资产与流量、工作文件和 LLM
-                    历史将压缩到冷存储。归档完成后可在任务列表的“已归档”页还原。
+                    タスクグラフ、関連レコード、専有資産とトラフィック、作業ファイル、LLM
+                    履歴がコールドストレージに圧縮されます。アーカイブ後はタスク一覧の「アーカイブ済み」ページから復元できます。
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => void archiveTask()}>确认归档</AlertDialogAction>
+                  <AlertDialogCancel>キャンセル</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void archiveTask()}>アーカイブする</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -398,7 +404,7 @@ function TaskDetailInner() {
           </Button>
         </div>
         <p className="truncate text-xs text-muted-foreground">{task.goal}</p>
-        {/* Tabs */}
+        {/* タブ */}
         <div className="no-scrollbar min-w-0 overflow-x-auto">
           <TabsList variant="default" className="min-w-max">
             {TABS.map((t) => (
@@ -415,7 +421,7 @@ function TaskDetailInner() {
         </div>
       </header>
 
-      {/* Tab content */}
+      {/* タブの内容 */}
       <div className="flex-1 p-4 lg:p-6">
         <TabsContent value="sessions" className="mt-0">
           <SessionsTab taskId={id} />
@@ -452,7 +458,7 @@ function TaskDetailInner() {
   );
 }
 
-// useSearchParams must sit under a Suspense boundary for static export.
+// 静的エクスポートでは useSearchParams を Suspense 境界の下に置く必要がある。
 export default function TaskDetailPage() {
   return (
     <React.Suspense fallback={null}>

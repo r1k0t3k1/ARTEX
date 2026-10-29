@@ -19,23 +19,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { AssetInterceptKind, AssetInterceptRule } from "@/lib/types";
 
-// ---- kind 元信息 ----
+// ---- kind のメタ情報 ----
 
 const KIND_OPTIONS: { value: AssetInterceptKind; label: string; group: string; placeholder: string }[] = [
-  { value: "exact_domain", label: "域名（全等）", group: "全等匹配", placeholder: "example.gov.cn" },
-  { value: "exact_ip", label: "IP（全等）", group: "全等匹配", placeholder: "203.0.113.10" },
-  { value: "exact_url", label: "URL（全等）", group: "全等匹配", placeholder: "https://example.gov.cn/login" },
-  { value: "fuzzy_domain", label: "域名（模糊）", group: "模糊匹配", placeholder: ".gov.cn" },
-  { value: "fuzzy_ip", label: "IP（模糊）", group: "模糊匹配", placeholder: "203.0.113." },
-  { value: "fuzzy_url", label: "URL（模糊）", group: "模糊匹配", placeholder: "/admin" },
-  { value: "cidr", label: "CIDR 网段", group: "网段", placeholder: "192.168.0.0/16" },
+  { value: "exact_domain", label: "ドメイン（完全一致）", group: "完全一致", placeholder: "example.gov.cn" },
+  { value: "exact_ip", label: "IP（完全一致）", group: "完全一致", placeholder: "203.0.113.10" },
+  { value: "exact_url", label: "URL（完全一致）", group: "完全一致", placeholder: "https://example.gov.cn/login" },
+  { value: "fuzzy_domain", label: "ドメイン（部分一致）", group: "部分一致", placeholder: ".gov.cn" },
+  { value: "fuzzy_ip", label: "IP（部分一致）", group: "部分一致", placeholder: "203.0.113." },
+  { value: "fuzzy_url", label: "URL（部分一致）", group: "部分一致", placeholder: "/admin" },
+  { value: "cidr", label: "CIDR ネットワーク", group: "ネットワーク", placeholder: "192.168.0.0/16" },
 ];
 
 const KIND_LABEL: Record<AssetInterceptKind, string> = Object.fromEntries(
   KIND_OPTIONS.map((o) => [o.value, o.label]),
 ) as Record<AssetInterceptKind, string>;
 
-const KIND_GROUPS = ["全等匹配", "模糊匹配", "网段"];
+const KIND_GROUPS = ["完全一致", "部分一致", "ネットワーク"];
 
 function KindBadge({ kind }: { kind: AssetInterceptKind }) {
   const fuzzy = kind.startsWith("fuzzy_");
@@ -77,12 +77,13 @@ type RuleForm = {
 
 const defaultForm = (): RuleForm => ({ enabled: true, kind: "fuzzy_domain", pattern: "", note: "" });
 
-// 前端轻校验（与后端一致：仅 exact_ip / cidr 做格式校验，其余交后端）。
+// フロントエンドの軽い検証（バックエンドと同一方針：形式検証は exact_ip / cidr のみ行い、
+// それ以外はバックエンドに委ねる）。
 function frontValidate(form: RuleForm): string | null {
   const p = form.pattern.trim();
-  if (!p) return "匹配内容不能为空";
+  if (!p) return "マッチ対象を入力してください";
   if (form.kind === "cidr" && !/^[0-9a-fA-F:.]+\/\d{1,3}$/.test(p)) {
-    return "CIDR 格式无效，形如 192.168.0.0/16";
+    return "CIDR の形式が正しくありません。192.168.0.0/16 のような形式で入力してください";
   }
   return null;
 }
@@ -101,7 +102,7 @@ export default function AssetInterceptPage() {
     try {
       setRules(await api.assetInterceptRules());
     } catch {
-      toast.error("加载资产拦截规则失败");
+      toast.error("資産インターセプトルールの読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
@@ -138,10 +139,10 @@ export default function AssetInterceptPage() {
     try {
       if (editing) {
         await api.updateAssetInterceptRule(editing.id, payload);
-        toast.success("规则已更新");
+        toast.success("ルールを更新しました");
       } else {
         await api.createAssetInterceptRule(payload);
-        toast.success("规则已创建");
+        toast.success("ルールを作成しました");
       }
       setOpen(false);
       load();
@@ -153,10 +154,10 @@ export default function AssetInterceptPage() {
   }
 
   async function handleDelete(rule: AssetInterceptRule) {
-    if (!window.confirm(`确定删除资产拦截规则「${rule.pattern}」？`)) return;
+    if (!window.confirm(`資産インターセプトルール「${rule.pattern}」を削除しますか？`)) return;
     try {
       await api.deleteAssetInterceptRule(rule.id);
-      toast.success("规则已删除");
+      toast.success("ルールを削除しました");
       load();
     } catch (e) {
       toast.error((e as Error).message);
@@ -180,45 +181,45 @@ export default function AssetInterceptPage() {
       <div className="flex items-center gap-2.5">
         <BanIcon className="h-5 w-5 shrink-0" />
         <div>
-          <h1 className="text-lg font-semibold leading-tight">资产拦截</h1>
+          <h1 className="text-lg font-semibold leading-tight">資産インターセプト</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            全局资产黑名单：命中的域名 / IP / URL / 网段将被拦截，不对其执行任何操作
+            グローバル資産ブラックリスト：一致したドメイン / IP / URL / ネットワークを遮断し、一切の操作を行わない
           </p>
         </div>
       </div>
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          支持全等与模糊匹配的域名 / IP / URL，以及 CIDR 网段；默认内置模糊拦截政府（.gov / .gov.cn）与教育（.edu /
-          .edu.cn）网站
+          完全一致・部分一致のドメイン / IP / URL、および CIDR ネットワークに対応。既定で政府（.gov /
+          .gov.cn）と教育（.edu / .edu.cn）サイトを部分一致で遮断するルールが組み込まれています
         </p>
         <Button onClick={openNew} size="sm" className="shrink-0">
           <PlusIcon className="h-4 w-4" />
-          新建规则
+          新規ルール
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <p className="p-6 text-sm text-muted-foreground">加载中…</p>
+            <p className="p-6 text-sm text-muted-foreground">読み込み中…</p>
           ) : rules.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
               <BanIcon className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">暂无资产拦截规则</p>
+              <p className="text-sm text-muted-foreground">資産インターセプトルールがありません</p>
               <Button size="sm" variant="outline" onClick={openNew}>
                 <PlusIcon className="h-4 w-4" />
-                新建第一条规则
+                最初のルールを作成
               </Button>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[130px]">类型</TableHead>
-                  <TableHead>匹配内容</TableHead>
-                  <TableHead>备注</TableHead>
-                  <TableHead className="w-[64px] text-center">启用</TableHead>
+                  <TableHead className="w-[130px]">種別</TableHead>
+                  <TableHead>マッチ対象</TableHead>
+                  <TableHead>備考</TableHead>
+                  <TableHead className="w-[64px] text-center">有効</TableHead>
                   <TableHead className="w-[80px]" />
                 </TableRow>
               </TableHeader>
@@ -237,7 +238,7 @@ export default function AssetInterceptPage() {
                       <div className="flex items-center gap-1.5">
                         {rule.builtin && (
                           <Badge variant="secondary" className="shrink-0 px-1 py-0 text-[10px]">
-                            内置
+                            組み込み
                           </Badge>
                         )}
                         <span className="truncate">{rule.note}</span>
@@ -273,12 +274,14 @@ export default function AssetInterceptPage() {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="flex flex-col gap-0 p-0 sm:max-w-md">
           <SheetHeader className="border-b px-6 py-4">
-            <SheetTitle>{editing ? "编辑资产拦截规则" : "新建资产拦截规则"}</SheetTitle>
-            <SheetDescription className="text-xs">命中此规则的目标资产会被全局拦截</SheetDescription>
+            <SheetTitle>{editing ? "資産インターセプトルールを編集" : "資産インターセプトルールを新規作成"}</SheetTitle>
+            <SheetDescription className="text-xs">
+              このルールに一致したターゲット資産はグローバルに遮断されます
+            </SheetDescription>
           </SheetHeader>
 
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
-            <Field label="匹配类型">
+            <Field label="マッチ種別">
               <Select value={form.kind} onValueChange={(v) => set({ kind: v as AssetInterceptKind })}>
                 <SelectTrigger>
                   <SelectValue />
@@ -301,13 +304,13 @@ export default function AssetInterceptPage() {
             </Field>
 
             <Field
-              label="匹配内容"
+              label="マッチ対象"
               hint={
                 form.kind === "cidr"
-                  ? "CIDR 网段，形如 192.168.0.0/16"
+                  ? "CIDR ネットワーク。192.168.0.0/16 のような形式"
                   : form.kind.startsWith("fuzzy_")
-                    ? "模糊匹配：目标包含此内容即命中"
-                    : "全等匹配：目标需与此内容完全一致"
+                    ? "部分一致：対象がこの内容を含めば一致"
+                    : "完全一致：対象がこの内容と完全に一致する必要あり"
               }
             >
               <Input
@@ -317,9 +320,9 @@ export default function AssetInterceptPage() {
               />
             </Field>
 
-            <Field label="备注（可选）">
+            <Field label="備考（任意）">
               <Textarea
-                placeholder="说明这条规则的用途"
+                placeholder="このルールの用途を記述"
                 value={form.note}
                 onChange={(e) => set({ note: e.target.value })}
                 rows={2}
@@ -332,14 +335,14 @@ export default function AssetInterceptPage() {
             <div className="flex items-center gap-3">
               <Switch id="asset-rule-enabled" checked={form.enabled} onCheckedChange={(v) => set({ enabled: v })} />
               <Label htmlFor="asset-rule-enabled" className="cursor-pointer">
-                启用此规则
+                このルールを有効化
               </Label>
             </div>
           </div>
 
           <SheetFooter className="border-t px-6 py-4 flex-row justify-end gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>
-              取消
+              キャンセル
             </Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? "保存中…" : "保存"}

@@ -28,8 +28,8 @@ type SSStatus = {
 type Dimension = "project" | "task";
 
 const ASSET_TYPES: { key: string; label: string }[] = [
-  { key: "subdomain", label: "子域名" },
-  { key: "service", label: "服务" },
+  { key: "subdomain", label: "サブドメイン" },
+  { key: "service", label: "サービス" },
   { key: "app", label: "App" },
 ];
 
@@ -37,8 +37,8 @@ export default function AssetSyncPage() {
   return (
     <div className="p-4 md:p-6">
       <div className="mb-4">
-        <h1 className="font-semibold text-xl">资产同步</h1>
-        <p className="text-muted-foreground text-sm">从外部数据源同步资产入库</p>
+        <h1 className="font-semibold text-xl">資産同期</h1>
+        <p className="text-muted-foreground text-sm">外部データソースから資産を同期して登録します</p>
       </div>
       <Tabs defaultValue="scopesentry">
         <TabsList>
@@ -61,7 +61,7 @@ function ScopeSentryPanel() {
     api
       .ssStatus()
       .then(setStatus)
-      .catch((e) => toast.error(`读取数据源状态失败：${e.message}`))
+      .catch((e) => toast.error(`データソースの状態を読み込めませんでした：${e.message}`))
       .finally(() => setLoadingStatus(false));
   }, []);
 
@@ -79,7 +79,7 @@ function ScopeSentryPanel() {
       ) : (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            数据源就绪后即可选择项目 / 任务进行同步。
+            データソースの準備ができたら、プロジェクト / タスクを選択して同期できます。
           </CardContent>
         </Card>
       )}
@@ -87,7 +87,7 @@ function ScopeSentryPanel() {
   );
 }
 
-// ── 数据源状态卡 ─────────────────────────────────────────────────────────────
+// ── データソース状態カード ───────────────────────────────────────────────────
 
 function DataSourceCard({
   status,
@@ -110,25 +110,27 @@ function DataSourceCard({
     setBusy(true);
     try {
       await api.ssDatasource({});
-      toast.success("已创建 ScopeSentry 数据源，请填写地址与密钥");
+      toast.success("ScopeSentry データソースを作成しました。アドレスとキーを入力してください");
       onChanged();
     } catch (e) {
-      toast.error(`创建失败：${(e as Error).message}`);
+      toast.error(`作成に失敗しました：${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
   };
 
   const save = async () => {
-    if (!url.trim()) return toast.error("请填写 MCP 地址");
+    if (!url.trim()) return toast.error("MCP アドレスを入力してください");
     setBusy(true);
     try {
       const r = await api.ssDatasource({ url: url.trim(), api_key: apiKey.trim() });
-      toast.success(r.enabled ? "已保存并启用数据源" : "已保存（尚未满足启用条件）");
+      toast.success(
+        r.enabled ? "データソースを保存して有効化しました" : "保存しました（有効化の条件をまだ満たしていません）",
+      );
       setApiKey("");
       onChanged();
     } catch (e) {
-      toast.error(`保存失败：${(e as Error).message}`);
+      toast.error(`保存に失敗しました：${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -138,40 +140,43 @@ function DataSourceCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base">
-          <PlugZapIcon className="size-4" /> 数据源状态
+          <PlugZapIcon className="size-4" /> データソースの状態
           <StatusBadge status={status} loading={loading} />
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={onChanged} disabled={loading}>
-          <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} /> 刷新
+          <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} /> 更新
         </Button>
       </CardHeader>
       <CardContent className="space-y-3">
         {!status?.exists ? (
           <div className="flex items-center justify-between gap-4">
             <p className="text-muted-foreground text-sm">
-              尚未创建 ScopeSentry 数据源。创建后会新增一个占位 MCP（地址/密钥为空、未启用）。
+              ScopeSentry データソースはまだ作成されていません。作成するとプレースホルダーの
+              MCP（アドレス/キーは空、無効）が追加されます。
             </p>
             <Button onClick={create} disabled={busy}>
-              创建数据源
+              データソースを作成
             </Button>
           </div>
         ) : (
           <>
             {!status.configured && (
               <p className="text-amber-600 text-sm dark:text-amber-500">
-                数据源已创建但未配置，请填写 MCP 地址与 API Key 后启用。
+                データソースは作成済みですが未設定です。MCP アドレスと API Key を入力して有効化してください。
               </p>
             )}
             {status.configured && !status.enabled && (
-              <p className="text-amber-600 text-sm dark:text-amber-500">数据源已配置但未启用，保存后将自动启用。</p>
+              <p className="text-amber-600 text-sm dark:text-amber-500">
+                データソースは設定済みですが無効です。保存すると自動的に有効化されます。
+              </p>
             )}
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>MCP 地址</Label>
-                <Input placeholder="http://<主机>:8082/mcp" value={url} onChange={(e) => setUrl(e.target.value)} />
+                <Label>MCP アドレス</Label>
+                <Input placeholder="http://<ホスト>:8082/mcp" value={url} onChange={(e) => setUrl(e.target.value)} />
               </div>
               <div className="space-y-1.5">
-                <Label>API Key（X-API-Key，留空保留原值）</Label>
+                <Label>API Key（X-API-Key、空欄なら元の値を保持）</Label>
                 <Input
                   type="password"
                   placeholder="ssk_..."
@@ -182,10 +187,10 @@ function DataSourceCard({
             </div>
             <div className="flex items-center gap-2">
               <Button onClick={save} disabled={busy}>
-                保存并启用
+                保存して有効化
               </Button>
               {status.enabled && status.tools.length > 0 && (
-                <span className="text-muted-foreground text-xs">已发现 {status.tools.length} 个工具</span>
+                <span className="text-muted-foreground text-xs">{status.tools.length} 個のツールを検出しました</span>
               )}
             </div>
           </>
@@ -196,24 +201,24 @@ function DataSourceCard({
 }
 
 function StatusBadge({ status, loading }: { status: SSStatus | null; loading: boolean }) {
-  if (loading || !status) return <Badge variant="secondary">检测中…</Badge>;
-  if (!status.exists) return <Badge variant="destructive">未创建</Badge>;
-  if (!status.configured) return <Badge variant="outline">未配置</Badge>;
-  if (!status.enabled) return <Badge variant="outline">未启用</Badge>;
+  if (loading || !status) return <Badge variant="secondary">確認中…</Badge>;
+  if (!status.exists) return <Badge variant="destructive">未作成</Badge>;
+  if (!status.configured) return <Badge variant="outline">未設定</Badge>;
+  if (!status.enabled) return <Badge variant="outline">無効</Badge>;
   if (status.reachable)
     return (
       <Badge className="bg-emerald-600 hover:bg-emerald-600">
-        <CheckCircle2Icon className="mr-1 size-3" /> 已连接
+        <CheckCircle2Icon className="mr-1 size-3" /> 接続済み
       </Badge>
     );
   return (
     <Badge variant="destructive">
-      <AlertCircleIcon className="mr-1 size-3" /> 不可达
+      <AlertCircleIcon className="mr-1 size-3" /> 到達不能
     </Badge>
   );
 }
 
-// ── 同步工作区（项目 / 任务维度）────────────────────────────────────────────────
+// ── 同期ワークベンチ（プロジェクト / タスクの次元）──────────────────────────────
 
 function SyncWorkbench() {
   const [dimension, setDimension] = React.useState<Dimension>("project");
@@ -241,7 +246,7 @@ function SyncWorkbench() {
       dimension === "project"
         ? api.ssProjects(page, 50, search).then((r) => setProjects(r.projects))
         : api.ssTasks(page, 50, search).then(setTasks);
-    fn.catch((e) => toast.error(`加载列表失败：${e.message}`)).finally(() => setLoading(false));
+    fn.catch((e) => toast.error(`一覧の読み込みに失敗しました：${e.message}`)).finally(() => setLoading(false));
   }, [dimension, page, search]);
 
   React.useEffect(() => {
@@ -266,8 +271,9 @@ function SyncWorkbench() {
   const chosenTypes = ASSET_TYPES.filter((t) => assetTypes[t.key]).map((t) => t.key);
 
   const runSync = async () => {
-    if (selected.size === 0) return toast.error(`请至少选择一个${dimension === "project" ? "项目" : "任务"}`);
-    if (chosenTypes.length === 0) return toast.error("请至少选择一种资产类型");
+    if (selected.size === 0)
+      return toast.error(`${dimension === "project" ? "プロジェクト" : "タスク"}を 1 つ以上選択してください`);
+    if (chosenTypes.length === 0) return toast.error("資産タイプを 1 つ以上選択してください");
     setSyncing(true);
     setResult(null);
     try {
@@ -279,9 +285,9 @@ function SyncWorkbench() {
       });
       setResult(r);
       const total = Object.values(r.synced ?? {}).reduce((a, b) => a + b, 0);
-      toast.success(`同步完成，共入库 ${total} 条资产`);
+      toast.success(`同期が完了しました。資産を合計 ${total} 件登録しました`);
     } catch (e) {
-      toast.error(`同步失败：${(e as Error).message}`);
+      toast.error(`同期に失敗しました：${(e as Error).message}`);
     } finally {
       setSyncing(false);
     }
@@ -292,7 +298,7 @@ function SyncWorkbench() {
       return (
         <TableRow>
           <TableCell colSpan={4} className="py-8 text-center text-muted-foreground text-sm">
-            加载中…
+            読み込み中…
           </TableCell>
         </TableRow>
       );
@@ -301,7 +307,7 @@ function SyncWorkbench() {
       return (
         <TableRow>
           <TableCell colSpan={4} className="py-8 text-center text-muted-foreground text-sm">
-            无数据
+            データがありません
           </TableCell>
         </TableRow>
       );
@@ -337,10 +343,10 @@ function SyncWorkbench() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">选择数据同步</CardTitle>
+        <CardTitle className="text-base">同期するデータを選択</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* 维度切换 */}
+        {/* 次元の切り替え */}
         <Tabs
           value={dimension}
           onValueChange={(v) => {
@@ -349,14 +355,14 @@ function SyncWorkbench() {
           }}
         >
           <TabsList>
-            <TabsTrigger value="project">项目维度</TabsTrigger>
-            <TabsTrigger value="task">任务维度</TabsTrigger>
+            <TabsTrigger value="project">プロジェクト単位</TabsTrigger>
+            <TabsTrigger value="task">タスク単位</TabsTrigger>
           </TabsList>
         </Tabs>
 
-        {/* 资产类型 + 选项 */}
+        {/* 資産タイプ + オプション */}
         <div className="flex flex-wrap items-center gap-4">
-          <span className="font-medium text-sm">同步资产：</span>
+          <span className="font-medium text-sm">同期する資産：</span>
           {ASSET_TYPES.map((t) => (
             <label key={t.key} htmlFor={`at-${t.key}`} className="flex items-center gap-1.5 text-sm">
               <Checkbox
@@ -370,18 +376,18 @@ function SyncWorkbench() {
           {dimension === "project" && (
             <label htmlFor="create-company" className="flex items-center gap-1.5 text-sm">
               <Checkbox id="create-company" checked={createCompany} onCheckedChange={(c) => setCreateCompany(!!c)} />
-              按项目建立企业并写入资产范围
+              プロジェクトごとに企業を作成し、資産範囲を書き込む
             </label>
           )}
         </div>
 
-        {/* 搜索 + 操作 */}
+        {/* 検索 + 操作 */}
         <div className="flex items-center gap-2">
           <div className="relative max-w-xs flex-1">
             <SearchIcon className="absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-8"
-              placeholder={dimension === "project" ? "搜索项目名" : "搜索任务名"}
+              placeholder={dimension === "project" ? "プロジェクト名を検索" : "タスク名を検索"}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
@@ -396,13 +402,13 @@ function SyncWorkbench() {
             <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} />
           </Button>
           <div className="flex-1" />
-          <span className="text-muted-foreground text-xs">已选 {selected.size}</span>
+          <span className="text-muted-foreground text-xs">選択中 {selected.size}</span>
           <Button onClick={runSync} disabled={syncing || selected.size === 0}>
-            <DownloadIcon className={syncing ? "size-4 animate-pulse" : "size-4"} /> 同步选中
+            <DownloadIcon className={syncing ? "size-4 animate-pulse" : "size-4"} /> 選択項目を同期
           </Button>
         </div>
 
-        {/* 列表 */}
+        {/* 一覧 */}
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -410,16 +416,16 @@ function SyncWorkbench() {
                 <TableHead className="w-10">
                   <Checkbox checked={rows.length > 0 && selected.size === rows.length} onCheckedChange={toggleAll} />
                 </TableHead>
-                <TableHead>{dimension === "project" ? "项目名" : "任务名"}</TableHead>
+                <TableHead>{dimension === "project" ? "プロジェクト名" : "タスク名"}</TableHead>
                 {dimension === "project" ? (
                   <>
-                    <TableHead>标签</TableHead>
-                    <TableHead className="text-right">资产数</TableHead>
+                    <TableHead>タグ</TableHead>
+                    <TableHead className="text-right">資産数</TableHead>
                   </>
                 ) : (
                   <>
-                    <TableHead>状态</TableHead>
-                    <TableHead>时间</TableHead>
+                    <TableHead>ステータス</TableHead>
+                    <TableHead>時刻</TableHead>
                   </>
                 )}
               </TableRow>
@@ -428,23 +434,23 @@ function SyncWorkbench() {
           </Table>
         </div>
 
-        {/* 分页 */}
+        {/* ページ送り */}
         <div className="flex items-center justify-end gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>
-            上一页
+            前へ
           </Button>
-          <span className="text-muted-foreground text-xs">第 {page} 页</span>
+          <span className="text-muted-foreground text-xs">{page} ページ</span>
           <Button
             variant="outline"
             size="sm"
             disabled={rows.length < 50 || loading}
             onClick={() => setPage((p) => p + 1)}
           >
-            下一页
+            次へ
           </Button>
         </div>
 
-        {/* 结果 */}
+        {/* 結果 */}
         {result && <SyncResult result={result} />}
       </CardContent>
     </Card>
@@ -453,7 +459,7 @@ function SyncWorkbench() {
 
 function SyncResult({ result }: { result: Awaited<ReturnType<typeof api.ssSync>> }) {
   const synced = result.synced ?? {};
-  const labels: Record<string, string> = { subdomain: "子域名", service: "服务", app: "App", ip: "IP" };
+  const labels: Record<string, string> = { subdomain: "サブドメイン", service: "サービス", app: "App", ip: "IP" };
   return (
     <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm">
       <div className="flex flex-wrap gap-3">
@@ -464,7 +470,7 @@ function SyncResult({ result }: { result: Awaited<ReturnType<typeof api.ssSync>>
         ))}
       </div>
       {result.companies && result.companies.length > 0 && (
-        <p className="text-muted-foreground">新建/更新企业：{result.companies.join("、")}</p>
+        <p className="text-muted-foreground">作成/更新した企業：{result.companies.join("、")}</p>
       )}
       {result.warnings && result.warnings.length > 0 && (
         <ul className="list-inside list-disc text-amber-600 dark:text-amber-500">
@@ -478,7 +484,7 @@ function SyncResult({ result }: { result: Awaited<ReturnType<typeof api.ssSync>>
           {result.errors.slice(0, 20).map((em) => (
             <li key={em}>{em}</li>
           ))}
-          {result.errors.length > 20 && <li>…共 {result.errors.length} 条错误</li>}
+          {result.errors.length > 20 && <li>…全 {result.errors.length} 件のエラー</li>}
         </ul>
       )}
     </div>

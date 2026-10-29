@@ -32,10 +32,11 @@ import { ConfigField, FilterSummary } from "./_components/channel-form";
 import { DeliveryList } from "./_components/delivery-list";
 import { formatBacklog, StatTile } from "./_components/stat-tile";
 
-// 本页只负责编排：加载数据、维护表单状态、调用接口。
-// 字段定义与解析在 _components/channel-fields.ts，控件与过滤摘要在
-// _components/channel-form.tsx，投递记录在 _components/delivery-list.tsx——
-// 拆开是因为它们各自能被单独读懂，而挤在一个文件里时这个页面接近 1100 行。
+// このページはオーケストレーションのみを担う：データの読み込み、フォーム状態の維持、
+// API の呼び出し。フィールド定義と解析は _components/channel-fields.ts、コントロールと
+// フィルタ要約は _components/channel-form.tsx、配信記録は
+// _components/delivery-list.tsx にある——分割したのはそれぞれ単独で読めるからで、
+// 1 ファイルに詰め込むとこのページは 1100 行近くになる。
 export default function NotifyPage() {
   const [meta, setMeta] = React.useState<NotificationMeta | null>(null);
   const [channels, setChannels] = React.useState<NotificationChannel[]>([]);
@@ -59,13 +60,14 @@ export default function NotifyPage() {
         setBaseURL(m.public_base_url);
         setDigestMin(m.digest_interval_min);
       })
-      .catch((e) => toast.error("读取推送配置失败：" + (e as Error).message));
-    // 渠道列表加载失败要报出来：静默失败会显示成「一个渠道都没有」，
-    // 用户会以为配置丢了，比直接报错更让人慌。
+      .catch((e) => toast.error("通知設定の読み込みに失敗しました：" + (e as Error).message));
+    // チャネル一覧の読み込み失敗は必ず通知する：静かに失敗すると「チャネルが
+    // 1 つもない」ように見え、ユーザーは設定が消えたと勘違いして、直接エラーを
+    // 出すより不安になるため。
     api
       .notifyChannels()
       .then(setChannels)
-      .catch((e) => toast.error("读取渠道列表失败：" + (e as Error).message));
+      .catch((e) => toast.error("チャネル一覧の読み込みに失敗しました：" + (e as Error).message));
   }, []);
   React.useEffect(() => {
     load();
@@ -86,7 +88,7 @@ export default function NotifyPage() {
 
   function openEdit(ch: NotificationChannel) {
     setEditing(ch);
-    // filter 在后端是 Go 结构体，永远序列化成对象（不会是 null），所以不需要兜底。
+    // filter はバックエンドでは Go 構造体で、常にオブジェクトにシリアライズされる（null にはならない）ため、フォールバックは不要。
     const f = ch.filter;
     setForm({
       name: ch.name,
@@ -94,8 +96,9 @@ export default function NotifyPage() {
       mode: ch.mode,
       enabled: ch.enabled,
       ratePerMin: String(ch.rate_per_min),
-      // 后端回显的 config 里凭据是掩码值；原样放进表单，提交时原样送回，
-      // 后端据此保留库中原值。
+      // バックエンドが返す config では資格情報がマスク値になっている。そのまま
+      // フォームに入れ、送信時もそのまま返すことで、バックエンドは DB の元値を
+      // 保持できる。
       config: { ...ch.config },
       minSeverity: f.min_severity ?? "",
       includeText: (f.vulnclass_include ?? []).join("\n"),
@@ -107,17 +110,19 @@ export default function NotifyPage() {
     setOpen(true);
   }
 
-  // buildConfig 把表单状态转成渠道 config。
+  // buildConfig はフォーム状態をチャネル config へ変換する。
   //
-  // 唯一的规则，两类值：
-  //   - 掩码值（"__masked__..."）原样送回 → 后端解读为「这个字段没改，保留库中原值」
-  //   - 其余一律按用户输入提交，空串即「清空该字段」
+  // ルールは 1 つだけ、値は 2 種類：
+  //   - マスク値（"__masked__..."）はそのまま返す → バックエンドは「このフィールドは
+  //     変更なし、DB の元値を保持」と解釈する
+  //   - それ以外はユーザー入力どおりに送信し、空文字は「このフィールドをクリア」
   //
-  // 之所以不特殊照顾凭据字段（比如「凭据留空就跳过」），是因为那会让用户**无法清除**
-  // 一个设错的密钥——界面上没有任何操作能表达「我要把它删掉」。现在的规则下，
-  // 清空输入框就等于清空该字段，语义唯一且用户可控。
-  // 掩码值不会出现在输入框里（见 ConfigField），所以「框里有字」永远等于
-  // 「用户主动填的」。
+  // 資格情報フィールドを特別扱いしない（「空ならスキップ」など）のは、それだと
+  // 設定ミスのある鍵をユーザーが**消せなくなる**ため——画面上に「消したい」を
+  // 表現する操作が存在しなくなる。現行ルールなら入力欄を空にする＝そのフィールドを
+  // 空にする、という唯一かつユーザーが制御できる意味になる。
+  // マスク値は入力欄に出ない（ConfigField 参照）ので、「欄に文字がある」は常に
+  // 「ユーザーが能動的に入力した」と等しい。
   function buildConfig(): Record<string, unknown> {
     const defs = CHANNEL_FIELDS[form.kind] ?? [];
     const out: Record<string, unknown> = {};
@@ -165,7 +170,7 @@ export default function NotifyPage() {
 
   async function saveForm() {
     if (!form.name.trim()) {
-      toast.error("请填写渠道名称");
+      toast.error("チャネル名を入力してください");
       return;
     }
     setSaving(true);
@@ -181,16 +186,16 @@ export default function NotifyPage() {
       };
       if (editing) {
         await api.notifyUpdateChannel(editing.id, payload);
-        toast.success("已保存");
+        toast.success("保存しました");
         setOpen(false);
       } else {
         await api.notifyCreateChannel(payload);
-        toast.success("已添加渠道");
+        toast.success("チャネルを追加しました");
         setOpen(false);
       }
       load();
     } catch (e) {
-      toast.error("保存失败：" + (e as Error).message);
+      toast.error("保存に失敗しました：" + (e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -201,10 +206,11 @@ export default function NotifyPage() {
     setTesting(true);
     try {
       const r = await api.notifyTestChannel(editing.id);
-      toast.success(`已发出测试消息（${r.latency_ms} ms），请到群里确认`);
+      toast.success(`テストメッセージを送信しました（${r.latency_ms} ms）。グループで確認してください`);
     } catch (e) {
-      // 后端把渠道返回的原始错误如实回传，这是排查配置的唯一线索，原样展示。
-      toast.error("测试失败：" + (e as Error).message, { duration: 12000 });
+      // バックエンドはチャネルが返した生のエラーをそのまま返す。設定調査の唯一の
+      // 手がかりなので、原文のまま表示する。
+      toast.error("テストに失敗しました：" + (e as Error).message, { duration: 12000 });
     } finally {
       setTesting(false);
     }
@@ -213,11 +219,11 @@ export default function NotifyPage() {
   async function removeChannel(ch: NotificationChannel) {
     try {
       await api.notifyDeleteChannel(ch.id);
-      toast.success(`已删除：${ch.name}`);
+      toast.success(`削除しました：${ch.name}`);
       setOpen(false);
       load();
     } catch (e) {
-      toast.error("删除失败：" + (e as Error).message);
+      toast.error("削除に失敗しました：" + (e as Error).message);
     }
   }
 
@@ -226,7 +232,7 @@ export default function NotifyPage() {
       await api.notifyUpdateChannel(ch.id, { enabled: !ch.enabled });
       load();
     } catch (e) {
-      toast.error("操作失败：" + (e as Error).message);
+      toast.error("操作に失敗しました：" + (e as Error).message);
     }
   }
 
@@ -235,9 +241,9 @@ export default function NotifyPage() {
     try {
       await api.setSettings({ notify_enabled: on });
       setMeta((m) => (m ? { ...m, enabled: on } : m));
-      toast.success(on ? "推送已开启" : "推送已暂停");
+      toast.success(on ? "通知を有効にしました" : "通知を一時停止しました");
     } catch (e) {
-      toast.error("操作失败：" + (e as Error).message);
+      toast.error("操作に失敗しました：" + (e as Error).message);
     } finally {
       setGlobalSaving(false);
     }
@@ -250,10 +256,10 @@ export default function NotifyPage() {
       const n = Number(digestMin);
       if (Number.isFinite(n) && n > 0) patch.notify_digest_interval_min = n;
       await api.setSettings(patch);
-      toast.success("已保存");
+      toast.success("保存しました");
       load();
     } catch (e) {
-      toast.error("保存失败：" + (e as Error).message);
+      toast.error("保存に失敗しました：" + (e as Error).message);
     } finally {
       setGlobalSaving(false);
     }
@@ -267,21 +273,23 @@ export default function NotifyPage() {
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">通知推送</h1>
+          <h1 className="text-xl font-semibold tracking-tight">通知配信</h1>
           <p className="text-muted-foreground text-sm">
-            发现漏洞时推送到钉钉 / 飞书 / 企业微信等渠道 · 每个渠道可独立设推送时机与过滤规则
+            脆弱性の検出時に DingTalk / Lark / WeCom などのチャネルへ配信 ·
+            チャネルごとに配信タイミングとフィルタルールを個別に設定可能
           </p>
         </div>
         {meta && (
-          // 用 div 而不是 label：Switch 自带 aria-label，外面再套一层 label
-          // 既关联不到任何原生控件，又会让点击文字看起来应该能切换。
+          // label ではなく div を使う：Switch は aria-label を自前で持つため、外側に
+          // label を重ねてもネイティブコントロールと関連づかず、テキストをクリックすると
+          // 切り替わりそうに見えてしまう。
           <div className="flex shrink-0 items-center gap-2 text-sm">
-            <span className="text-muted-foreground">总开关</span>
+            <span className="text-muted-foreground">全体スイッチ</span>
             <Switch
               checked={meta.enabled}
               disabled={globalSaving}
               onCheckedChange={toggleGlobal}
-              aria-label="推送总开关"
+              aria-label="通知の全体スイッチ"
             />
           </div>
         )}
@@ -289,15 +297,16 @@ export default function NotifyPage() {
 
       {meta && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <StatTile label="渠道" value={`${meta.stats.channels_on} / ${meta.stats.channels}`} hint="启用 / 总数" />
-          <StatTile label="今日送达" value={String(meta.stats.sent_today)} />
-          <StatTile label="待发送" value={String(meta.stats.pending)} />
-          <StatTile label="失败" value={String(meta.stats.failed)} tone={meta.stats.failed > 0 ? "red" : undefined} />
+          <StatTile label="チャネル" value={`${meta.stats.channels_on} / ${meta.stats.channels}`} hint="有効 / 合計" />
+          <StatTile label="本日の配信済み" value={String(meta.stats.sent_today)} />
+          <StatTile label="送信待ち" value={String(meta.stats.pending)} />
+          <StatTile label="失敗" value={String(meta.stats.failed)} tone={meta.stats.failed > 0 ? "red" : undefined} />
           <StatTile
-            label="最久积压"
+            label="最長バックログ"
             value={formatBacklog(meta.stats.backlog_age_ms)}
-            // 积压年龄比积压条数有用得多：积压 3 条可以是从 3 秒到 3 小时。
-            hint={meta.stats.backlog_age_ms > 5 * 60_000 ? "推送可能卡住了" : undefined}
+            // バックログの経過時間は件数よりはるかに有用：3 件のバックログが 3 秒前
+            // なのか 3 時間前なのかは大きく違う。
+            hint={meta.stats.backlog_age_ms > 5 * 60_000 ? "配信が詰まっている可能性" : undefined}
             tone={meta.stats.backlog_age_ms > 5 * 60_000 ? "red" : undefined}
           />
         </div>
@@ -305,21 +314,23 @@ export default function NotifyPage() {
 
       <Card className="gap-3">
         <CardHeader>
-          <CardTitle className="text-base">全局设置</CardTitle>
+          <CardTitle className="text-base">グローバル設定</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-2">
-            <Label htmlFor="n-base">回链地址</Label>
+            <Label htmlFor="n-base">リンク先ベース URL</Label>
             <Input
               id="n-base"
               placeholder="https://artex.example.com"
               value={baseURL}
               onChange={(e) => setBaseURL(e.target.value)}
             />
-            <p className="text-muted-foreground text-xs">消息里「查看详情」按钮指向的地址。留空则不带按钮。</p>
+            <p className="text-muted-foreground text-xs">
+              メッセージ内の「詳細を見る」ボタンのリンク先。空欄ならボタンを付けません。
+            </p>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="n-digest">汇总周期（分钟）</Label>
+            <Label htmlFor="n-digest">集約周期（分）</Label>
             <Input
               id="n-digest"
               type="number"
@@ -329,11 +340,11 @@ export default function NotifyPage() {
               value={digestMin}
               onChange={(e) => setDigestMin(e.target.value)}
             />
-            <p className="text-muted-foreground text-xs">仅对「汇总」模式的渠道生效。</p>
+            <p className="text-muted-foreground text-xs">「集約」モードのチャネルにのみ適用されます。</p>
           </div>
           <div className="sm:col-span-2">
             <Button onClick={saveGlobal} disabled={globalSaving}>
-              保存全局设置
+              グローバル設定を保存
             </Button>
           </div>
         </CardContent>
@@ -341,8 +352,8 @@ export default function NotifyPage() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as "channels" | "deliveries")} className="flex flex-col gap-4">
         <TabsList>
-          <TabsTrigger value="channels">渠道</TabsTrigger>
-          <TabsTrigger value="deliveries">投递记录</TabsTrigger>
+          <TabsTrigger value="channels">チャネル</TabsTrigger>
+          <TabsTrigger value="deliveries">配信記録</TabsTrigger>
         </TabsList>
 
         <TabsContent value="channels">
@@ -353,7 +364,7 @@ export default function NotifyPage() {
               className="text-foreground/70 border-foreground/70 hover:bg-muted/60 hover:shadow-sm flex min-h-[130px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed transition"
             >
               <PlusIcon className="size-6" />
-              <span className="text-sm">添加渠道</span>
+              <span className="text-sm">チャネルを追加</span>
             </button>
 
             {channels.map((ch) => (
@@ -366,25 +377,28 @@ export default function NotifyPage() {
                   <div className="flex items-center gap-2">
                     <BellIcon className="text-muted-foreground size-4 shrink-0" />
                     <CardTitle className="truncate text-base">{ch.name}</CardTitle>
-                    {/* 卡片整体可点（进入编辑），所以这两个控件必须各自吞掉冒泡，
-                        否则开关/删除会顺带触发编辑。把 stopPropagation 挂在控件自己
-                        身上，而不是套一层 div：套 div 会造出一个「看起来可交互但没有
-                        角色」的静态元素，既触发 a11y 告警，语义上也说不通。 */}
+                    {/* カード全体がクリック可能（編集へ遷移）なので、この 2 つの
+                        コントロールはそれぞれバブリングを止める必要がある。止めないと
+                        スイッチ/削除が編集も同時に発火させる。stopPropagation は
+                        コントロール自身に付け、div で包まない：包むと「操作できそうで
+                        役割を持たない」静的要素が生まれ、a11y 警告を誘発するうえ
+                        意味論的にも筋が通らない。 */}
                     <div className="ml-auto flex items-center gap-2">
                       <Switch
                         checked={ch.enabled}
                         onCheckedChange={() => toggleEnabled(ch)}
                         onClick={(e) => e.stopPropagation()}
-                        aria-label="启用"
+                        aria-label="有効化"
                       />
                       <Button
                         size="icon"
                         variant="outline"
-                        aria-label="删除"
+                        aria-label="削除"
                         onClick={(e) => {
                           e.stopPropagation();
-                          // void 显式丢弃 Promise：removeChannel 自己 catch 并 toast，
-                          // 这里不需要 await（onClick 不是 async）。
+                          // void で Promise を明示的に破棄する：removeChannel 自身が
+                          // catch して toast するので、ここで await する必要はない
+                          // （onClick は async ではない）。
                           void removeChannel(ch);
                         }}
                       >
@@ -396,8 +410,8 @@ export default function NotifyPage() {
                 <CardContent className="grid gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{KIND_LABEL[ch.kind] ?? ch.kind}</Badge>
-                    <Badge variant="outline">{ch.mode === "digest" ? "汇总" : "实时"}</Badge>
-                    {!ch.enabled && <Badge variant="outline">已停用</Badge>}
+                    <Badge variant="outline">{ch.mode === "digest" ? "集約" : "リアルタイム"}</Badge>
+                    {!ch.enabled && <Badge variant="outline">無効化済み</Badge>}
                   </div>
                   <FilterSummary filter={ch.filter} />
                 </CardContent>
@@ -414,21 +428,21 @@ export default function NotifyPage() {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-full data-[side=right]:sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>{editing ? editing.name : "添加通知渠道"}</SheetTitle>
+            <SheetTitle>{editing ? editing.name : "通知チャネルを追加"}</SheetTitle>
             <SheetDescription>
               {KIND_LABEL[form.kind] ?? form.kind}
-              {defaultRate > 0 ? ` · 默认限流 ${defaultRate} 条/分钟` : " · 不限流"}
+              {defaultRate > 0 ? ` · 既定レート制限 ${defaultRate} 件/分` : " · レート制限なし"}
             </SheetDescription>
           </SheetHeader>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4">
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label>渠道类型</Label>
+                <Label>チャネル種別</Label>
                 <Select
                   value={form.kind}
                   onValueChange={(v) => {
-                    // 换类型等于换一套凭据字段，不能把旧配置合并进来。
+                    // 種別を変える＝資格情報フィールドの一式が変わるので、旧設定をマージしてはならない。
                     setF({ kind: v, config: {} });
                   }}
                   disabled={!!editing}
@@ -446,16 +460,16 @@ export default function NotifyPage() {
                 </Select>
                 {editing && (
                   <p className="text-muted-foreground text-xs">
-                    渠道类型不可修改——改了类型等于换一套凭据，请新建渠道。
+                    チャネル種別は変更できません。種別を変えると資格情報の一式が変わるため、新規にチャネルを作成してください。
                   </p>
                 )}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="n-name">渠道名称</Label>
+                <Label htmlFor="n-name">チャネル名</Label>
                 <Input
                   id="n-name"
-                  placeholder="应急响应群 / 日常播报群"
+                  placeholder="インシデント対応グループ / 日次レポートグループ"
                   value={form.name}
                   onChange={(e) => setF({ name: e.target.value })}
                 />
@@ -463,7 +477,8 @@ export default function NotifyPage() {
 
               {fields.length === 0 ? (
                 <p className="text-muted-foreground text-sm">
-                  该渠道的表单尚未定义（前端缺 CHANNEL_FIELDS 条目），请补全后再试。
+                  このチャネルのフォームは未定義です（フロントエンドに CHANNEL_FIELDS
+                  の項目がありません）。追加してから再試行してください。
                 </p>
               ) : (
                 fields.map((d) => (
@@ -478,41 +493,42 @@ export default function NotifyPage() {
               )}
 
               <div className="grid gap-2">
-                <Label>推送时机</Label>
+                <Label>配信タイミング</Label>
                 <Select value={form.mode} onValueChange={(v) => setF({ mode: v as "realtime" | "digest" })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="realtime">实时 · 每条漏洞单独发一条</SelectItem>
-                    <SelectItem value="digest">汇总 · 按周期合并成一条</SelectItem>
+                    <SelectItem value="realtime">リアルタイム · 脆弱性ごとに 1 件ずつ送信</SelectItem>
+                    <SelectItem value="digest">集約 · 周期ごとに 1 件へまとめて送信</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-muted-foreground text-xs">
-                  想做「高危实时、其余汇总」就建两个渠道：一个实时 + 门槛高危，一个汇总 + 不限级别。
+                  「高以上はリアルタイム、それ以外は集約」にしたい場合はチャネルを 2 つ作成します：リアルタイム +
+                  しきい値「高以上」と、集約 + レベル指定なし。
                 </p>
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="n-rate">限流（条/分钟）</Label>
+                <Label htmlFor="n-rate">レート制限（件/分）</Label>
                 <Input
                   id="n-rate"
                   type="number"
                   min={0}
-                  placeholder={defaultRate > 0 ? String(defaultRate) : "0 = 不限"}
+                  placeholder={defaultRate > 0 ? String(defaultRate) : "0 = 制限なし"}
                   value={form.ratePerMin}
                   onChange={(e) => setF({ ratePerMin: e.target.value })}
                 />
                 <p className="text-muted-foreground text-xs">
-                  留空用渠道默认值；0 表示不限流。超限不会丢消息，只会推迟发送。
+                  空欄ならチャネルの既定値。0 は制限なし。上限を超えてもメッセージは失われず、送信が遅れるだけです。
                 </p>
               </div>
 
               <div className="border-t pt-4">
-                <p className="mb-3 text-sm font-medium">过滤规则（留空即不过滤）</p>
+                <p className="mb-3 text-sm font-medium">フィルタルール（空欄ならフィルタなし）</p>
                 <div className="grid gap-4">
                   <div className="grid gap-2">
-                    <Label>最低级别</Label>
+                    <Label>最低レベル</Label>
                     <Select
                       value={form.minSeverity || "all"}
                       onValueChange={(v) => setF({ minSeverity: v === "all" ? "" : v })}
@@ -530,29 +546,31 @@ export default function NotifyPage() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="n-inc">只推这些漏洞类型</Label>
+                    <Label htmlFor="n-inc">この脆弱性種別のみ配信</Label>
                     <Textarea
                       id="n-inc"
-                      placeholder={"SQL注入\n命令执行"}
+                      placeholder={"SQL インジェクション\nコマンド実行"}
                       value={form.includeText}
                       onChange={(e) => setF({ includeText: e.target.value })}
                     />
                     <p className="text-muted-foreground text-xs">
-                      每行一个关键词，大小写不敏感的子串匹配。留空=全部类型。
+                      1 行に 1 キーワード。大文字小文字を区別しない部分一致です。空欄＝すべての種別。
                     </p>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="n-exc">排除这些漏洞类型</Label>
+                    <Label htmlFor="n-exc">この脆弱性種別を除外</Label>
                     <Textarea
                       id="n-exc"
-                      placeholder={"信息泄露"}
+                      placeholder={"情報漏洩"}
                       value={form.excludeText}
                       onChange={(e) => setF({ excludeText: e.target.value })}
                     />
-                    <p className="text-muted-foreground text-xs">排除优先于包含：同时命中时会被排除。</p>
+                    <p className="text-muted-foreground text-xs">
+                      除外は包含より優先されます：両方に一致した場合は除外されます。
+                    </p>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="n-tasks">限定任务 ID</Label>
+                    <Label htmlFor="n-tasks">タスク ID を限定</Label>
                     <Input
                       id="n-tasks"
                       placeholder="1, 2, 3"
@@ -561,39 +579,41 @@ export default function NotifyPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="n-assets">限定资产 ID</Label>
+                    <Label htmlFor="n-assets">資産 ID を限定</Label>
                     <Input
                       id="n-assets"
                       placeholder="10, 11"
                       value={form.assetIDsText}
                       onChange={(e) => setF({ assetIDsText: e.target.value })}
                     />
-                    <p className="text-muted-foreground text-xs">任务/资产留空=不限；填写后要求与漏洞有交集。</p>
+                    <p className="text-muted-foreground text-xs">
+                      タスク/資産が空欄＝限定なし。入力した場合は脆弱性と共通のタスク/資産を持つことが条件になります。
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <Switch
                       checked={form.onStatusChange}
                       onCheckedChange={(v) => setF({ onStatusChange: v })}
-                      aria-label="接收状态变更"
+                      aria-label="ステータス変更を受信"
                     />
-                    漏洞处置状态变更时也推送（仅实时模式）
+                    脆弱性の対応ステータス変更時にも配信（リアルタイムモードのみ）
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 text-sm">
-                <Switch checked={form.enabled} onCheckedChange={(v) => setF({ enabled: v })} aria-label="启用" />
-                启用该渠道
+                <Switch checked={form.enabled} onCheckedChange={(v) => setF({ enabled: v })} aria-label="有効化" />
+                このチャネルを有効化
               </div>
             </div>
 
             <div className="flex gap-2 pt-2 pb-6">
               <Button onClick={saveForm} disabled={saving}>
-                {editing ? "保存" : "添加"}
+                {editing ? "保存" : "追加"}
               </Button>
               {editing && (
                 <Button variant="outline" onClick={testChannel} disabled={testing}>
-                  <SendIcon /> 发送测试消息
+                  <SendIcon /> テストメッセージを送信
                 </Button>
               )}
             </div>

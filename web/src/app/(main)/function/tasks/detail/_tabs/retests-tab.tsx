@@ -20,7 +20,7 @@ import type { Finding, FindingsPage } from "@/lib/types";
 const PAGE_SIZE = 20;
 
 function findingLabel(finding: Finding) {
-  return finding.name?.trim() || finding.vulnclass.trim() || "未分类";
+  return finding.name?.trim() || finding.vulnclass.trim() || "未分類";
 }
 
 export function RetestsTab({ taskId }: { taskId: string }) {
@@ -31,8 +31,8 @@ export function RetestsTab({ taskId }: { taskId: string }) {
   const [refreshVersion, setRefreshVersion] = React.useState(0);
   const refresh = React.useCallback(() => setRefreshVersion((version) => version + 1), []);
 
-  // Only this task's own findings, including those without graph nodes.
-  // Fetch history only for the selection, and wait for each poll to finish.
+  // このタスク自身の検出結果のみ(グラフノードを持たないものも含む)。
+  // 履歴は選択中の項目についてのみ取得し、各ポーリングの完了を待つ。
   React.useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -56,7 +56,7 @@ export function RetestsTab({ taskId }: { taskId: string }) {
         if (!disposed) timer = setTimeout(() => void load(), 3000);
       }
     }
-    void refreshVersion; // Refresh triage immediately after a retest completes.
+    void refreshVersion; // 再検証の完了後、トリアージを即座に更新する。
     void load();
     return () => {
       disposed = true;
@@ -73,9 +73,9 @@ export function RetestsTab({ taskId }: { taskId: string }) {
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>
-            加载任务漏洞失败：{error}
+            タスクの脆弱性の読み込みに失敗しました：{error}
             <Button variant="outline" size="sm" onClick={refresh}>
-              重试
+              再試行
             </Button>
           </AlertDescription>
         </Alert>
@@ -83,8 +83,10 @@ export function RetestsTab({ taskId }: { taskId: string }) {
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>选择漏洞{data ? ` · ${data.total}` : ""}</CardTitle>
-            <CardDescription>查看本任务漏洞的复测记录，或发起新的复测。</CardDescription>
+            <CardTitle>脆弱性を選択{data ? ` · ${data.total}` : ""}</CardTitle>
+            <CardDescription>
+              このタスクの脆弱性の再検証記録を確認したり、新しい再検証を開始したりできます。
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex max-h-[32rem] flex-col overflow-y-auto">
             {!loaded && !error ? <Skeleton className="h-24 w-full" /> : null}
@@ -94,7 +96,7 @@ export function RetestsTab({ taskId }: { taskId: string }) {
                 <Button
                   variant={finding.id === selectedId ? "secondary" : "ghost"}
                   className="h-auto w-full shrink-0 flex-col items-start gap-2 whitespace-normal py-3 text-left"
-                  aria-label={`选择漏洞：${findingLabel(finding)}`}
+                  aria-label={`脆弱性を選択：${findingLabel(finding)}`}
                   aria-pressed={finding.id === selectedId}
                   onClick={() => setSelectedId(finding.id)}
                 >
@@ -109,8 +111,10 @@ export function RetestsTab({ taskId }: { taskId: string }) {
             {loaded && findings.length === 0 ? (
               <Empty>
                 <EmptyHeader>
-                  <EmptyTitle>暂无可复测漏洞</EmptyTitle>
-                  <EmptyDescription>本任务发现漏洞后，可在这里手动发起复测。</EmptyDescription>
+                  <EmptyTitle>再検証できる脆弱性はまだありません</EmptyTitle>
+                  <EmptyDescription>
+                    このタスクで脆弱性が検出されると、ここから手動で再検証を開始できます。
+                  </EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : null}
@@ -120,19 +124,19 @@ export function RetestsTab({ taskId }: { taskId: string }) {
               <Button
                 variant="outline"
                 size="icon-sm"
-                aria-label="上一页漏洞"
+                aria-label="前のページの脆弱性"
                 disabled={page === 1}
                 onClick={() => setPage(page - 1)}
               >
                 <ChevronLeftIcon />
               </Button>
               <span className="text-muted-foreground text-xs">
-                第 {page} / {Math.ceil(data.total / PAGE_SIZE)} 页
+                {page} / {Math.ceil(data.total / PAGE_SIZE)} ページ
               </span>
               <Button
                 variant="outline"
                 size="icon-sm"
-                aria-label="下一页漏洞"
+                aria-label="次のページの脆弱性"
                 disabled={page * PAGE_SIZE >= data.total}
                 onClick={() => setPage(page + 1)}
               >
@@ -148,7 +152,7 @@ export function RetestsTab({ taskId }: { taskId: string }) {
                 <h2 className="min-w-0 flex-1 break-words font-medium">{findingLabel(selected)}</h2>
                 <Button asChild variant="ghost" size="sm">
                   <Link href={`/function/findings/detail?id=${selected.finding_id || selected.id}`}>
-                    漏洞详情 <ArrowUpRightIcon data-icon="inline-end" />
+                    脆弱性の詳細 <ArrowUpRightIcon data-icon="inline-end" />
                   </Link>
                 </Button>
               </div>
