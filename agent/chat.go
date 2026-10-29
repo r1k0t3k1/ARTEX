@@ -76,9 +76,9 @@ func (c *ChatAgent) SetGuard(g *guard.Guard) { c.guard = g }
 
 // chatWorkDirSpec returns a working-directory notice appended to every chat
 // agent's system prompt. Mirrors artifactSpec but without pentest-specific
-// wording ("payload", "抓响应体") that would be odd in a general assistant.
+// wording ("payload", "レスポンス本文の取得") that would be odd in a general assistant.
 func chatWorkDirSpec(workDir string) string {
-	return "\n\n**文件输出规约**：需要写文件时，一律写到工作目录 " + workDir + "（这是默认 CWD，相对路径即落在这里，也可用该绝对路径）——不要写 /tmp 或其他绝对路径。"
+	return "\n\n**ファイル出力規約**：ファイルを書き出す必要がある場合は、必ず作業ディレクトリ " + workDir + " に書くこと（ここが既定の CWD であり、相対パスはここに解決される。この絶対パスを使ってもよい）——/tmp やその他の絶対パスには書かないこと。"
 }
 
 // chatSystem renders the DB-managed prompt body for agentKey. Custom agents have
@@ -132,11 +132,11 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		DeferredTools:   def.Deferred,
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
+		EnableWebFetch:  true, // 記録プロキシを経由して記録を残す。プロキシ CA を読み込み、MITM で再署名された HTTPS 証明書を検証する
 		WebFetchProxy:   c.proxyAddr,
 		WebFetchCACert:  c.proxyCACert,
-		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
+		// ウェブ検索(任意)。ddgs は key 不要；brave-free は BraveKey が必要；tavily は TavilyKey が必要。
+		// WebSearchProxy は独立した出口プロキシ(http/https/socks5)で、トラフィック記録用の MITM プロキシとは無関係；空なら直接接続。
 		EnableWebSearch:       ws.Enabled,
 		WebSearchBackend:      ws.Backend,
 		BraveSearchAPIKey:     ws.BraveKey,
@@ -145,20 +145,20 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		DeepSeekSearchAPIKey:  ws.DeepSeekAPIKey,
 		DeepSeekSearchModel:   ws.DeepSeekModel,
 		WebSearchProxy:        ws.Proxy,
-		BashEnv:               proxyEnv(c.proxyAddr, c.proxyCACert), // Bash 子命令默认走代理+信任 CA
+		BashEnv:               proxyEnv(c.proxyAddr, c.proxyCACert), // Bash サブコマンドは既定でプロキシ経由+CA を信頼
 		WorkingDir:            sessionWorkDir,
 		MaxTurns:              maxTurns,
 		MaxDuration:           maxDuration,
 		Compaction:            compactionConfig(c.window),
 		Todos:                 actool.NewTodoStore(),
 		// large tool output spills to cmd-output/ under the session dir.
-		// 截断上限用 SDK 默认(tool.Capture 的 30000 字符)。
+		// 切り詰め上限は SDK 既定(tool.Capture の 30000 文字)を使用。
 		ToolOutputDir: filepath.Join(sessionWorkDir, "cmd-output"),
-		// 命中预算(步数)→ SDK 跑收尾:输出一句总结。Prompt 与收尾轮数按本 agent key 后台可编辑
-		// (自定义 agent 各自一份;留空/0 用通用默认:10 轮)。
+		// 予算(ステップ数)に到達→ SDK が締めくくりを実行:まとめを 1 文出力する。プロンプトと締めくくりのターン数は本 agent key ごとにバックエンドで編集可能
+		// (カスタム agent はそれぞれ 1 つ;空のまま/0 なら汎用既定:10 ターン)。
 		Settlement:   wrapupSettlement(agentKey, nil),
-		NonStreaming: c.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    c.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+		NonStreaming: c.nonStreaming(), // この profile が非ストリーミングを選んだ場合は Provider.Complete を使う
+		MaxTokens:    c.maxTokens(),    // 0 = 上限を送信しない,サーバー側の既定値で決まる
 	}
 	if c.guard != nil {
 		opts.Hooks = c.guard.Hooks()
@@ -167,7 +167,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		opts.Transcript = c.tx
 		opts.SessionID = sessionID
 	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
+	// 実験機能:有効にすると noa がコンテキスト圧縮を引き継ぐ(アーカイブは <workDir>/noa/<SessionID> 配下に集約され、永続化される)。
 	enableNoa(&opts, c.noaEnabledFn, c.workDir, "chat-"+sessionID, noaWarn("chat-"+sessionID))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)

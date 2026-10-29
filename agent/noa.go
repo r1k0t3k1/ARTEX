@@ -14,18 +14,18 @@ func noaWarn(session string) func(string) {
 	return func(msg string) { log.Printf("[noa] %s: %s", session, msg) }
 }
 
-// noa 是 norma v0.4.0 引入的「模型驱动上下文压缩」机制,作为平台实验功能由用户在
-// 系统设置中开关。它与内置 compaction 互斥:noaadapter.Enable 是唯一入口,一次挂上
-// 上下文接管器(Compactor)、Compress 工具与三段常驻提示词,不调用 Enable 即为关闭
-// (内置 compaction 照常工作)。开关由每个 agent 注入的 noaEnabledFn 解析,每 run 读
-// 一次,故切换只影响之后启动的 run,无需重建 agent。
+// noa は norma v0.4.0 で導入された「モデル駆動のコンテキスト圧縮」機構で、プラットフォームの実験機能として
+// ユーザーがシステム設定でオン/オフする。組み込みの compaction とは排他である：noaadapter.Enable が唯一の入口で、
+// コンテキスト接管器(Compactor)、Compress ツール、3 段の常駐プロンプトを一度に装着する。Enable を呼ばなければオフであり
+// （組み込み compaction は従来どおり動作する）、スイッチは各 agent が注入する noaEnabledFn が解析し、run ごとに 1 回読む。
+// そのため切り替えは以後に起動する run にのみ影響し、agent の再構築は不要である。
 
-// enableNoa 在解析器报告开启时把 noa 接入 opts。archiveRoot 是压缩原文的持久化基目录
-// (取全局 workDir,各 agent 统一落在 <workDir>/noa 下,不随任务/意图目录分散),sessionID
-// 命名其下的归档子目录(全局唯一,故同一基目录内不冲突)。
+// enableNoa は、リゾルバがオンを報告したときに noa を opts へ接続する。archiveRoot は圧縮原文の永続化基点ディレクトリ
+// （グローバルな workDir を取り、各 agent は <workDir>/noa 配下に統一して置く。タスク/意図のディレクトリごとに分散しない）。sessionID は
+// その配下のアーカイブサブディレクトリを命名する（グローバルに一意なので、同じ基点ディレクトリ内で衝突しない）。
 //
-// noa 是实验功能:接入失败不得中断真实任务。发生错误时经 onWarn 上报并回退内置压缩。
-// 启用成功时清掉 opts.Compaction,避免 agentcore 因「两个上下文管理器同时设置」告警。
+// noa は実験機能である：接続の失敗で実際のタスクを中断してはならない。エラー発生時は onWarn で報告し、組み込み圧縮へフォールバックする。
+// 有効化に成功したら opts.Compaction をクリアし、agentcore が「2 つのコンテキスト管理器が同時に設定されている」と警告するのを避ける。
 func enableNoa(opts *agentcore.Options, enabled func() bool, archiveRoot, sessionID string, onWarn func(string)) {
 	if enabled == nil || !enabled() {
 		return
@@ -39,10 +39,10 @@ func enableNoa(opts *agentcore.Options, enabled func() bool, archiveRoot, sessio
 		OnWarn:         onWarn,
 	}); err != nil {
 		if onWarn != nil {
-			onWarn("noa 压缩启用失败,回退内置压缩:" + err.Error())
+			onWarn("noa 圧縮の有効化に失敗、組み込み圧縮へフォールバック: " + err.Error())
 		}
 		return
 	}
-	// Compactor 覆盖 Compaction,但两者并存时 agentcore 每次会告警;明确清掉。
+	// Compactor は Compaction を上書きするが、両者が併存すると agentcore が毎回警告するため、明示的にクリアする。
 	opts.Compaction = nil
 }

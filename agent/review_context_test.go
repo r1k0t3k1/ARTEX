@@ -26,7 +26,7 @@ func TestWorkerReviewContextAcrossToolCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	expID, err := d.CreateExploration("只操作隔离测试目录", "验证创建和清理")
+	expID, err := d.CreateExploration("隔離されたテストディレクトリのみを操作", "作成とクリーンアップを検証")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,14 +79,14 @@ func TestWorkerReviewContextAcrossToolCalls(t *testing.T) {
 	probe := tool.Build(tool.Spec{Name: probeName, Schema: map[string]any{"type": "object"},
 		Run: func(context.Context, json.RawMessage, *tool.ToolContext) (tool.Result, error) {
 			executions++
-			_, err := ts.AddConstraint("deny", "禁止后续清理", "human")
+			_, err := ts.AddConstraint("deny", "後続のクリーンアップを禁止", "human")
 			return tool.Text("Created a new fixture; no existing file overwritten."), err
 		},
 	})
 	workDir := t.TempDir()
 	ctx := intercept.WithTaskContext(t.Context(), taskID, "test-agent", nil)
 	ctx = intercept.WithReviewContext(ctx, "/parent", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: "PARENT_BACKGROUND_SENTINEL"})
-	intentPayload := map[string]any{"summary": "创建并清理", "extra": "FULL_INTENT_SENTINEL"}
+	intentPayload := map[string]any{"summary": "作成とクリーンアップ", "extra": "FULL_INTENT_SENTINEL"}
 	intentID, err := ts.AddNode("intent", intentPayload, 0, "running", "planner", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestWorkerReviewContextAcrossToolCalls(t *testing.T) {
 			t.Fatalf("unexpected Worker background: %+v", in)
 		}
 		raw, _ := json.Marshal(in)
-		for _, forbidden := range []string{"创建并清理", "PARENT_BACKGROUND_SENTINEL", `"background"`, "只操作隔离测试目录", "验证创建和清理", "禁止后续清理", "FULL_INTENT_SENTINEL", "全局探索态势", `"task_id"`, `"task"`, `"turn_input"`, `"worker_intent"`, `"history"`, `"history_truncated"`, `"correlation"`, "Created a new fixture"} {
+		for _, forbidden := range []string{"作成とクリーンアップ", "PARENT_BACKGROUND_SENTINEL", `"background"`, "隔離されたテストディレクトリのみを操作", "作成とクリーンアップを検証", "後続のクリーンアップを禁止", "FULL_INTENT_SENTINEL", "グローバル探索状況", `"task_id"`, `"task"`, `"turn_input"`, `"worker_intent"`, `"history"`, `"history_truncated"`, `"correlation"`, "Created a new fixture"} {
 			if strings.Contains(string(raw), forbidden) {
 				t.Fatalf("unexpected review data: %s", forbidden)
 			}

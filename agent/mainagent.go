@@ -81,24 +81,24 @@ func (m *MainAgent) SetWebSearch(o WebSearchOpts) { m.webSearch = o }
 // tool inject a mid-run course-correction into a running work (nil = tool off).
 func (m *MainAgent) SetSteerWork(fn func(intentID int64, msg string) error) { m.steerWork = fn }
 
-// mainAgentDefaultTmpl is the built-in EDITABLE body (段 [A]) of the main agent
-// prompt, seeded into agent_prompts. Goal is a {{.Goal}} template var; the 中间
-// 产物输出规约 tail is code-owned (artifactSpec), appended after rendering.
-const mainAgentDefaultTmpl = `你是一个授权渗透测试系统的"主 agent"，是人类操作员的接口。你不亲自探索、也不自主连续生成意图（那是规划者的工作）。你的职责：
+// mainAgentDefaultTmpl is the built-in EDITABLE body (セクション [A]) of the main agent
+// prompt, seeded into agent_prompts. Goal is a {{.Goal}} template var; the
+// 中間成果物出力規約 tail is code-owned (artifactSpec), appended after rendering.
+const mainAgentDefaultTmpl = `あなたは許可済みペネトレーションテストシステムの「主 agent」であり、人間のオペレーターのインターフェースである。自分では探索せず、意図を自律的に連続生成もしない（それはプランナーの仕事）。あなたの責務：
 
-1. 观察：用 graph_overview / list_findings / list_facts / list_assets / get_worker_output 回答人关于当前进展的问题。
-2. 操舵（把人的意图落到系统）：
-   - 人想"改方向/强调某类漏洞/重点某区域" → 用 add_hint 写提示（规划者下次会读到）。
-   - 人想"立刻测某个具体目标" → 用 add_intent 直接注入一条高优先级意图（priority 8-10）。系统会自动把已完成的任务拉回运行态、让 worker 领这条意图执行，跑完即回到已完成状态。
-     **当任务目标已全部达成时**（graph_overview 里 goals 均为 met）：下发前先判断这条意图背后是否隐含一个"新的、要达成的结果"。若隐含，用一句话把你猜测的目标复述给人，并**反问是否要登记为正式目标**——人要 → 用 set_goals 登记（任务随后进入常规规划、规划者会自主往下推进）；人不要 / 只是想临时探一下 → 只 add_intent 下发这一条，worker 执行完任务即回到已完成状态（不会自主继续）。若这条意图明显只是一次性查证、不隐含新目标，直接 add_intent 即可，不必每次都问。
-   - 人想"对某条正在运行的意图(work)实时纠偏（别再走 X、聚焦 Y）" → 用 steer_work（不打断、不丢已有进展，worker 下一步动作前生效）；先用 get_worker_output 看它在干嘛。方向整个错了则改用 add_intent 另下新意图。
-   - 人想"新增一个要达成的最终目标" → 用 set_goals 增补目标。系统会把该目标写入任务图并**自动把已完成/暂停的任务拉回运行态继续跑**（规划者随后会据此重新判断是否达成），无需人工再点恢复。
-   - 人想"增/改测试约束（允许/禁止某类操作，如『仅测当前端口』『禁止爆破』『只做被动侦察』）" → 用 set_constraints 登记（type=allow 允许 / type=deny 禁止）。约束会在下一轮规划时注入 planner/worker 的提示词以框定探索边界；也可在总览「约束管理」里增删改。
-3. 用人话简洁回复，说明你做了什么。
+1. 観察：graph_overview / list_findings / list_facts / list_assets / get_worker_output で、現在の進捗に関する人の質問に答える。
+2. 操舵（人の意図をシステムに落とす）：
+   - 人が「方向を変えたい/ある種の脆弱性を強調したい/ある領域を重点にしたい」→ add_hint でヒントを書く（プランナーが次回読む）。
+   - 人が「ある具体的な対象をすぐテストしたい」→ add_intent で高優先度の意図（priority 8-10）を直接注入する。システムは完了済みのタスクを自動で実行状態へ戻し、worker がこの意図を受け取って実行し、終われば完了状態に戻る。
+     **タスクゴールがすべて達成済みの場合**（graph_overview で goals がすべて met）：下ろす前に、この意図の背後に「新たに達成すべき結果」が含まれていないかを判断する。含まれるなら、推測したゴールを 1 文で人に復唱し、**正式なゴールとして登録するかどうかを問い返す**——人が要る → set_goals で登録する（タスクはその後通常の計画に入り、プランナーが自律的に進める）；人が不要 / 一時的に探ってみたいだけ → add_intent だけでこの 1 件を下ろし、worker が実行し終えればタスクは完了状態に戻る（自律的に続行しない）。この意図が明らかに一度きりの確認で新たなゴールを含まないなら、そのまま add_intent でよく、毎回問い返す必要はない。
+   - 人が「実行中の意図(work)に対してリアルタイムに軌道修正したい（もう X をやらず Y に集中）」→ steer_work を使う（中断せず、既存の進捗も失わず、worker の次の動作前に効く）；まず get_worker_output で何をしているか見る。方向が完全に誤っているなら、代わりに add_intent で新しい意図を下ろす。
+   - 人が「達成すべき最終ゴールを追加したい」→ set_goals でゴールを追加する。システムはそのゴールをタスクグラフに書き込み、**完了/一時停止中のタスクを自動で実行状態へ戻して続行させる**（プランナーがその後これを踏まえて達成判定をやり直す）。人手で再開を押す必要はない。
+   - 人が「テスト制約を追加/変更したい（ある種の操作を許可/禁止。例『現在のポートのみテスト』『ブルートフォース禁止』『受動的偵察のみ』）」→ set_constraints で登録する（type=allow 許可 / type=deny 禁止）。制約は次回の計画時に planner/worker のプロンプトへ注入され、探索境界を画定する。概要の「制約管理」で追加・削除・変更もできる。
+3. 平易な言葉で簡潔に返答し、何をしたかを説明する。
 
-当前任务目标：{{.Goal}}
+現在のタスクゴール：{{.Goal}}
 
-不要编造发现；只根据工具返回的真实数据回答。`
+発見を捏造しないこと；ツールが返す実際のデータだけに基づいて答える。`
 
 func mainAgentSystem(goal, dataDir, workDir string) string {
 	body := renderSystem("mainagent", mainAgentDefaultTmpl, MainVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
@@ -117,18 +117,18 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
-	tsx.SetNotify(notify)         // 通用唤醒（无专用回调的写操作走它，debounced）
-	tsx.SetResumeTask(resume)     // set_goals 新增目标 → 把已完成/暂停的任务拉回 running
-	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
-	tsx.SetNotifyHint(notifyHint) // add_hint 新增提示 → 给 planner 记一条「人新增了 N 条战略提示：…」触发
+	tsx.SetNotify(notify)         // 汎用ウェイクアップ（専用コールバックのない書き込み操作はこれを使う。debounce あり）
+	tsx.SetResumeTask(resume)     // set_goals でゴール追加 → 完了/一時停止中のタスクを running に戻す
+	tsx.SetNotifyGoal(notifyGoal) // set_goals でゴール追加 → planner に「人がゴールを追加：…」のトリガーを記録
+	tsx.SetNotifyHint(notifyHint) // add_hint でヒント追加 → planner に「人が戦略ヒントを N 件追加：…」のトリガーを記録
 	tsx.steerWork = m.steerWork   // enable steer_work tool (nil = unavailable)
-	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
-	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
+	// ドメインツール + 基本の既定ツールセット（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
+	// 資産カバレッジ機能が無効なら add_task_scope/list_untested_assets を除外する（プロンプトに入れない）。
 	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), actool.DefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "mainagent", base)
 	defer cleanup()
-	// 本任务的工作目录 <workDir>/tasks/<taskID>，先建好。
+	// 本タスクの作業ディレクトリ <workDir>/tasks/<taskID>。先に作成しておく。
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
 	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
@@ -140,11 +140,12 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		DeferredTools:   def.Deferred,
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
+		EnableWebFetch:  true, // 記録プロキシ経由で足跡を残す；プロキシ CA を読み込み MITM 再署名の HTTPS 証明書を検証する
 		WebFetchProxy:   m.proxyAddr,
 		WebFetchCACert:  m.proxyCACert,
-		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
+		// Web 検索（任意）。ddgs は key 不要；brave-free は BraveKey、tavily は TavilyKey が必要。
+		// WebSearchProxy は独立した出口プロキシ（http/https/socks5）で、トラフィック記録用の MITM プロキシとは
+		// 無関係；空なら直接接続。
 		EnableWebSearch:       m.webSearch.Enabled,
 		WebSearchBackend:      m.webSearch.Backend,
 		BraveSearchAPIKey:     m.webSearch.BraveKey,
@@ -153,16 +154,16 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		DeepSeekSearchAPIKey:  m.webSearch.DeepSeekAPIKey,
 		DeepSeekSearchModel:   m.webSearch.DeepSeekModel,
 		WebSearchProxy:        m.webSearch.Proxy,
-		BashEnv:               proxyEnv(m.proxyAddr, m.proxyCACert), // Bash 子命令默认走代理+信任 CA
-		WorkingDir:            mainDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
+		BashEnv:               proxyEnv(m.proxyAddr, m.proxyCACert), // Bash サブコマンドは既定でプロキシ経由+CA を信頼
+		WorkingDir:            mainDir,                              // 本タスクの作業ディレクトリ <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(mainDir),
 		MaxTurns:              m.maxTurns,                             // 0 = unlimited (configurable in agent management)
 		Compaction:            compactionConfig(m.compactionWindow()), // long chats stay within the window
-		Todos:                 actool.NewTodoStore(),                  // 会话级临时待办（TodoWrite），纯规划用，退出即丢
-		// 命中预算(步数)→ SDK 跑收尾:向用户输出一句进展总结。Prompt 与收尾轮数可后台编辑(默认 10 轮)。
+		Todos:                 actool.NewTodoStore(),                  // セッション単位の一時的な待ち項目（TodoWrite）。計画専用で、終了時に破棄。
+		// 予算（ステップ数）到達→ SDK が締めくくりを実行：ユーザーへ進捗のまとめを 1 文出力する。プロンプトと締めくくりのターン数はバックエンドで編集可能（既定 10 ターン）。
 		Settlement:   wrapupSettlement("mainagent", nil),
-		NonStreaming: m.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    m.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+		NonStreaming: m.nonStreaming(), // この profile が非ストリーミングを選んだ場合は Provider.Complete を使う
+		MaxTokens:    m.maxTokens(),    // 0 = 上限を送らない（サーバー側の既定値に任せる）
 	}
 	if m.tx != nil { // persist raw human↔AI conversation; one accumulating file per segment
 		opts.Transcript = m.tx
@@ -173,8 +174,8 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 			opts.SessionID = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
 		}
 	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	// session id 与 transcript 同规则(分段感知),使归档与恢复对齐。
+	// 実験機能：有効化すると noa がコンテキスト圧縮を引き継ぐ（アーカイブは <workDir>/noa/<SessionID> 配下に集約、永続）。
+	// session id は transcript と同じ規則（セグメント対応）にし、アーカイブと復元を揃える。
 	noaSession := fmt.Sprintf("exp%d-main", ts.ID())
 	if mainSeg > 0 {
 		noaSession = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)

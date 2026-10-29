@@ -35,7 +35,7 @@ func (t *ToolSet) digestMemberEntry(store *db.ExplorationStore, id int64) map[st
 	return m
 }
 
-// coldDigestsRecent returns a store's active digests as flat bodies for
+// coldDigestsRecent は、ある store のアクティブな digest を graph_overview 用のフラットな body として返す。
 // graph_overview, ordered by the recency of their freshest member (max member id ≈
 // latest cooled node — a digest near the live frontier is likelier relevant), and
 // capped at `cap`. Overflow digest ids are returned separately (moreIDs) so they
@@ -82,9 +82,9 @@ func coldDigestsRecent(store *db.ExplorationStore, cap int) (shown []map[string]
 
 // hiddenMembersFor returns a predicate telling whether a member is hidden (folded
 // into an active digest AND still cold) in the given store — so a source task's
-// overview folds exactly the way that task folds itself (§2 cross-task: "当前任务
-// 什么展示逻辑，关联任务就什么逻辑"). A revived (now hot) covered member is NOT
-// hidden (§6 render-time revival check). Returns a never-hidden predicate when the
+// overview はそのタスク自身が折り畳むのとまったく同じように折り畳む（§2 クロスタスク：「現在のタスクの
+// 何をどう表示するか、関連タスクも同じロジック」）。復活した（現在ホットな）被カバーメンバーは
+// hidden ではない（§6 描画時の復活チェック）。store に digest が 1 つもない場合は常に not hidden を返す述語を返す。
 // store has no digests.
 func hiddenMembersFor(store *db.ExplorationStore) func(int64) bool {
 	covered, err := store.CoveredMembers()
@@ -119,11 +119,11 @@ func (t *ToolSet) resolveDigest(id int64) (*db.Node, *db.ExplorationStore, int64
 // node's full detail.
 func (t *ToolSet) expandDigest() actool.CoreTool {
 	return t.writeExpTool("expand_digest",
-		"展开一个 cold digest：返回它折叠的成员紧凑列表（id/summary/state/confidence），与概览 recent_facts/recent_done_intents 同形状。要某条完整细节/证据用 node_detail(member_id)。",
+		"cold digest を展開する：それが折り畳んだメンバーのコンパクトなリスト（id/summary/state/confidence）を返す。概観の recent_facts/recent_done_intents と同じ形である。ある項目の完全な詳細/証拠が必要なら node_detail(member_id) を使う。",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"id": map[string]any{"type": "integer", "description": "digest 节点 id（来自概览 cold_digests）"},
+				"id": map[string]any{"type": "integer", "description": "digest ノード id（概観の cold_digests 由来）"},
 			},
 			"required": []any{"id"},
 		},
@@ -134,7 +134,7 @@ func (t *ToolSet) expandDigest() actool.CoreTool {
 			_ = json.Unmarshal(raw, &in)
 			n, store, srcTaskID := t.resolveDigest(in.ID)
 			if n == nil {
-				return jsonResult(map[string]any{"error": fmt.Sprintf("#%d 不是 digest 节点（本任务或直接关联任务里都没找到）", in.ID)})
+				return jsonResult(map[string]any{"error": fmt.Sprintf("#%d は digest ノードではない（本タスクにも直接関連タスクにも見つからない）", in.ID)})
 			}
 			var p struct {
 				Body string `json:"body"`
@@ -144,7 +144,7 @@ func (t *ToolSet) expandDigest() actool.CoreTool {
 			list := make([]map[string]any, 0, len(members))
 			for _, m := range members {
 				entry := t.digestMemberEntry(store, m)
-				if srcTaskID > 0 { // 关联任务的成员：只读，带继承标记（§2）
+				if srcTaskID > 0 { // 関連タスクのメンバー：読み取り専用で、継承マークを付ける（§2）
 					entry["inherited"] = true
 					entry["source_task_id"] = srcTaskID
 				}

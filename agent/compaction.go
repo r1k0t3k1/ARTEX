@@ -80,17 +80,18 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 		return
 	}
 	if !c.tryStart(ts.ID()) {
-		return // already running, or within cooldown —派生态最终一致，下轮再压
+		return // already running, or within cooldown — 派生状態は最終的に一致するので、次ラウンドで圧縮する
 	}
 	go func() {
 		defer c.finish(ts.ID())
 		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.maxDur)
 		defer cancel()
-		// 压缩是裸 provider 调用（compress 里直接 prov.Complete），不经过 agentcore
-		// 的会话循环，所以 ctx 上没有 session id；按 session-id 头做提示缓存/粘性
-		// 路由的网关（opencode zen 缺 x-opencode-session 直接 400）就收不到该头。
-		// 这里补一个按探索稳定的 id：同一探索的所有压缩请求共享它，既能带上头，
-		// 也让 llmrec 能把这次调用的 token 归因回该探索（此前记不到）。
+		// 圧縮は素の provider 呼び出し（compress 内で直接 prov.Complete）で、agentcore
+		// のセッションループを通らないため、ctx に session id がない。session-id ヘッダーで
+		// プロンプトキャッシュ/スティッキールーティングを行うゲートウェイ（opencode zen は
+		// x-opencode-session がないと即 400）はこのヘッダーを受け取れない。
+		// ここで探索ごとに安定した id を補う：同じ探索のすべての圧縮リクエストがこれを共有し、
+		// ヘッダーを付けられるうえ、llmrec が今回の呼び出しの token をその探索に帰属できる（以前は記録できなかった）。
 		bg = transcript.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", ts.ID()))
 		if needMajor {
 			c.major(bg, ts)
@@ -188,7 +189,7 @@ func (c *Compactor) minor(ctx context.Context, ts *db.ExplorationStore) {
 }
 
 // major re-derives the whole grouping from source over ALL eligible-cold nodes
-// (§5.1 回源重压), then reconciles against the active digests by signature:
+// (§5.1 ソースへ戻って再圧縮), then reconciles against the active digests by signature:
 // unchanged blocks keep their digest (no LLM), stale digests are superseded, and
 // new/changed blocks are compressed afresh. This is where tiered fragments of one
 // direction merge and where "later became connected" blocks unify (§5.2).
@@ -281,7 +282,7 @@ func (c *Compactor) foldBlock(ctx context.Context, ts *db.ExplorationStore, g *c
 	}
 }
 
-// generationFor computes a digest's重摘代次 (§1): 1 for a fresh fold; for a major
+// generationFor computes a digest's 再要約世代 (§1): 1 for a fresh fold; for a major
 // merge, max(generation) over the active digests that overlap this block's
 // members, +1.
 func (c *Compactor) generationFor(b block, active []*db.Node) int {
@@ -455,14 +456,14 @@ func nodeConfidence(n *db.Node) string {
 // buildCompressionInput renders the connected sub-graph for the §4 prompt:
 // member nodes (summary + id + kind + state + confidence), the internal blood
 // edges among members, and — for a §3.1 shared-parent group — the anchor parents
-// as context ("共同父 #p"), which are NOT members.
+// as context ("共通の親 #p"), which are NOT members.
 func buildCompressionInput(g *coldGraph, b block, nodeByID map[int64]*db.Node) string {
 	memberSet := make(map[int64]bool, len(b.Members))
 	for _, m := range b.Members {
 		memberSet[m] = true
 	}
 	var sb strings.Builder
-	sb.WriteString("【成员节点（要压缩的）】：\n")
+	sb.WriteString("【メンバーノード（圧縮対象）】：\n")
 	for _, m := range b.Members {
 		n := nodeByID[m]
 		kind := "fact"
@@ -485,18 +486,18 @@ func buildCompressionInput(g *coldGraph, b block, nodeByID map[int64]*db.Node) s
 	for _, m := range b.Members {
 		for _, to := range g.children[m] {
 			if memberSet[to] {
-				edgeLines = append(edgeLines, fmt.Sprintf("- #%d 产出/派生→ #%d", m, to))
+				edgeLines = append(edgeLines, fmt.Sprintf("- #%d 産出/派生→ #%d", m, to))
 			}
 		}
 	}
 	if len(edgeLines) > 0 {
-		sb.WriteString("\n【成员之间的血缘边（父→子）】：\n")
+		sb.WriteString("\n【メンバー間の血縁エッジ（親→子）】：\n")
 		sort.Strings(edgeLines)
 		sb.WriteString(strings.Join(edgeLines, "\n"))
 		sb.WriteByte('\n')
 	}
 	if len(b.Anchors) > 0 {
-		sb.WriteString("\n【共同父 / 上下文锚（不是成员，只用于理解这些结果从哪个意图探出）】：\n")
+		sb.WriteString("\n【共通の親 / コンテキストアンカー（メンバーではなく、これらの結果がどの意図から探られたかを理解するためのもの）】：\n")
 		for _, a := range b.Anchors {
 			n := nodeByID[a]
 			state := ""
@@ -530,19 +531,19 @@ func (c *Compactor) compress(ctx context.Context, g *coldGraph, b block, nodeByI
 }
 
 // compressionSystemPrompt is the §4 body prompt.
-const compressionSystemPrompt = `你在压缩一组【彼此关联】的探索节点，产出一段综合结论(body)，供规划者快速掌握"这一片已经探明了什么"。
+const compressionSystemPrompt = `あなたは【互いに関連する】探索ノードの集合を圧縮し、総合的な結論(body)を 1 段生成する。プランナーが「この一片で何が解明されたか」を素早く把握できるようにするためのもの。
 
-输入是一个连通子图：
-- 节点：每条是一个意图或事实的 summary（一句话），带 id、类型(intent/fact)、state、confidence(若有)。
-- 关系：节点之间的血缘边（A 派生自 B / A 产出 B），说明它们如何串联。
-- 若节点间没有直接血缘边、但同属一个上游意图（会另给出该上游意图作为"共同父 #p"），则按"这个意图（#p）探到了什么"来综合它们——共同父只是上下文锚、不是要压缩的成员。
+入力は連結したサブグラフである：
+- ノード：各行は意図または事実の summary（一文）で、id、種別(intent/fact)、state、confidence（あれば）を持つ。
+- 関係：ノード間の血縁エッジ（A は B から派生 / A は B を産出）で、それらがどうつながるかを示す。
+- ノード間に直接の血縁エッジがなくても同じ上流意図に属する場合（その上流意図を「共通の親 #p」として別途与える）、「この意図（#p）が何を探ったか」という観点でそれらを総合する——共通の親はコンテキストアンカーにすぎず、圧縮対象のメンバーではない。
 
-据此写一段 body：
-1. 综合、不罗列：顺着关系把因果串起来（哪个事实催生哪个意图、哪条意图产出了哪个结论），讲成"这一片探索得出了什么"，不要把每条 summary 抄一遍。
-2. 保留区分度：彼此不同的结论分别说清，别揉成一句笼统的话。
-3. 保留证据强度：带 confidence 的结论标出 observed / inferred；inferred 的否定/存疑结论要点明它只是推断、可复核，别写成定论。
-4. 带上 id：每条结论后标注来源节点 id（如"…（#12,#28）"），让规划者能按 id 还原原节点。
-5. 正向陈述、只写输入里有的：不脑补、不引入输入中没有的判断。
-6. 长度随内容自适应：结论少就短，多且互不相同就写够——但整体显著短于所有输入 summary 的总和。
+これに基づいて body を書く：
+1. 総合する、列挙しない：関係に沿って因果をつなぐ（どの事実がどの意図を生み、どの意図がどの結論を産出したか）、「この一片の探索から何が得られたか」として語り、各 summary をそのまま書き写さない。
+2. 識別性を保つ：互いに異なる結論はそれぞれ明確に述べ、一言の曖昧な文にまとめない。
+3. 証拠の強度を保つ：confidence を持つ結論は observed / inferred を明示する。inferred の否定的/疑問のある結論は、あくまで推測であり再確認可能であることを明示し、確定事項として書かない。
+4. id を付ける：各結論の後に出所ノードの id を注記する（例「…（#12,#28）」）。プランナーが id から元ノードを復元できるようにする。
+5. 肯定的に述べ、入力にあるものだけを書く：推測で補わず、入力にない判断を持ち込まない。
+6. 長さは内容に応じて調整する：結論が少なければ短く、多く互いに異なれば十分に書く——ただし全体として、入力 summary の合計より明らかに短くする。
 
-只输出 body 正文本身。`
+body 本文そのものだけを出力する。`
