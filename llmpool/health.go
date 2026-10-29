@@ -1,4 +1,4 @@
-// Package llmpool implements LLM failover ("轮询"): a Provider decorator that
+// Package llmpool は LLM フェイルオーバー（「ローテーション」）を実装する：Provider のデコレータで、
 // walks an ordered chain of LLM profiles and moves to the next one when the
 // current one can't serve the request — out of credit, revoked key, rate-limited
 // past the SDK's own retries, or down.
@@ -161,7 +161,7 @@ func (r *Registry) Trip(id int64, errMsg string, hard bool) (tripped bool) {
 	return tripped
 }
 
-// Reset clears one profile's state — the UI's "立即恢复" action.
+// Reset は 1 つのプロファイルの状態をクリアする — UI の「即時復旧」アクション。
 func (r *Registry) Reset(id int64) {
 	r.mu.Lock()
 	delete(r.m, id)

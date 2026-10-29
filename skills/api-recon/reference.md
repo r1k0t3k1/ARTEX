@@ -1,28 +1,28 @@
-# api-recon — 参考手册
+# api-recon — リファレンスマニュアル
 
-Grep 配方、`config.json` 模板与排障。所有 grep 针对 `js/` 目录执行。bundle 单行时可先 `js-beautify` 或 `sed 's/}/}\n/g'`，通常带上下文窗口的 raw grep 即可。
+Grep レシピ、`config.json` テンプレート、トラブルシューティング。すべての grep は `js/` ディレクトリに対して実行する。bundle が 1 行の場合は先に `js-beautify` または `sed 's/}/}\n/g'` を使うとよいが、通常はコンテキストウィンドウ付きの raw grep で十分。
 
-## 脚本说明
+## スクリプトの説明
 
-`scripts/` 内所有文件均为**参考模板**，执行前必须按目标站点调整。典型改动点：
+`scripts/` 内のすべてのファイルは**参考テンプレート**であり、実行前に必ず対象サイトに合わせて調整する。よくある変更ポイント：
 
-| 脚本 | 常见需调整项 |
+| スクリプト | よく調整が必要な項目 |
 |---|---|
-| `harvest_static.py` | endpoint 正则、webpack/Vite manifest 解析、微前端 publicPath、重试/并发 |
-| `runtime_harvest.js` | neutralize 字段名与成功值、stub 匹配规则与 body 结构、routes 来源、WS 录制、`waitUntil`/`routeTimeout`/`proxy` |
-| `preload.js` | `loginPathRe`、L1 stubs、`neutralize.fields`、`apiPattern`、是否启用 L3、`recordDetail`、`observe.*`、`neutralizeVueRouter` |
-| `spider_mpa.py` | `--exclude` 破坏性链接、cookie、depth/max、同域过滤 |
-| `extract_route_map.py` | `routeMap` / `routeLink` 正则、KEY 命名模式 |
-| `build_perm_tree.py` | `userRouteAuth` 解析、`ROOTS`/`PREFIX_PARENT` 层级启发式、stub 外层字段名 |
-| `config.json` | 以上全部站点专属参数的统一入口 |
+| `harvest_static.py` | endpoint 正規表現、webpack/Vite manifest の解析、マイクロフロントエンドの publicPath、リトライ/並列度 |
+| `runtime_harvest.js` | neutralize のフィールド名と成功値、stub のマッチルールと body 構造、routes の供給元、WS 記録、`waitUntil`/`routeTimeout`/`proxy` |
+| `preload.js` | `loginPathRe`、L1 stubs、`neutralize.fields`、`apiPattern`、L3 の有効化可否、`recordDetail`、`observe.*`、`neutralizeVueRouter` |
+| `spider_mpa.py` | `--exclude` の破壊的リンク、cookie、depth/max、同一ドメインフィルタ |
+| `extract_route_map.py` | `routeMap` / `routeLink` 正規表現、KEY の命名パターン |
+| `build_perm_tree.py` | `userRouteAuth` の解析、`ROOTS`/`PREFIX_PARENT` の階層ヒューリスティック、stub の外側フィールド名 |
+| `config.json` | 上記すべてのサイト固有パラメータの統一入口 |
 
-调整后的文件建议放在任务工作目录（如 `recon/`），报告中注明相对参考脚本的具体改动。
+調整後のファイルはタスクの作業ディレクトリ（例 `recon/`）に置き、レポートに参考スクリプトからの具体的な変更点を記載することを推奨する。
 
 ---
 
-## A. 逆向三道门
+## A. 逆解析の 3 つのゲート
 
-### A1. 渲染门 — 「如何判断已登录？」
+### A1. 描画ゲート — 「ログイン済みをどう判断するか？」
 
 ```bash
 grep -rhoaE '.{0,40}(isLogin|isAuthenticated|loggedIn|hasLogin|requireAuth)\b.{0,80}' js | head
@@ -32,19 +32,19 @@ grep -rhoaE '(Cookies?|cookie)\.(get|load)\("[^"]+"\)' js | sort -u
 grep -rhoaE '\batob\(|JSON\.parse\(|jwt|decode' js | head
 ```
 
-找链路 `isLogin = f(getUser())` → `getUser = decode(storage.read(KEY))`，确定 **存储键**、**容器**（Cookie vs localStorage）、**编码**：
+チェーン `isLogin = f(getUser())` → `getUser = decode(storage.read(KEY))` を探し、**ストレージキー**、**コンテナ**（Cookie か localStorage か）、**エンコード**を特定する：
 
-| 编码 | config 伪造方式 |
+| エンコード | config での偽造方法 |
 |---|---|
-| 明文字符串 / `"1"` / token | `"value": "anything-truthy"` |
+| 平文文字列 / `"1"` / token | `"value": "anything-truthy"` |
 | `JSON.parse(x)` | `"value": "json:{\"id\":1,\"username\":\"admin\"}"` |
 | `JSON.parse(atob(x))` | `"value": "b64json:{\"id\":1,\"username\":\"admin\"}"` |
-| JWT | 无签名/`alg:none` JWT，或 bundle 内密钥签名 |
-| 加密（SM2/AES/RSA） | 找硬编码密钥；渲染门仅需可解码 blob 时可 forge；否则静态兜底 |
+| JWT | 署名なし/`alg:none` の JWT、または bundle 内の鍵で署名 |
+| 暗号化（SM2/AES/RSA） | ハードコードされた鍵を探す。描画ゲートにデコード可能な blob だけで足りるなら forge 可能。そうでなければ静的解析でフォールバック |
 
-→ 写入 `cookies` / `localStorage`。
+→ `cookies` / `localStorage` に書き込む。
 
-### A2. 拦截器门 — 「什么触发跳 /login？」
+### A2. インターセプタゲート — 「何が /login への遷移をトリガーするか？」
 
 ```bash
 grep -rhoaE '.{0,60}(interceptors\.response|axios|request\.use).{0,120}' js | head
@@ -53,15 +53,15 @@ grep -rhoaE '.{0,40}(未登录|请重新登录|登录已过期|unauthorized|登�
 grep -rhoaE '.{0,30}(location\.href|router\.(push|replace)|navigate)\([^)]*login[^)]*\)' js | head
 ```
 
-确定：**字段名**、**成功值**（通常 `0` 或 `200`）、**触发跳转的失败值**。用 junk session 验证：
+**フィールド名**、**成功値**（通常 `0` または `200`）、**遷移をトリガーする失敗値**を特定する。junk セッションで検証する：
 
 ```bash
 curl -sk -X POST -H 'Cookie: <fakekey>=junk' https://target/api/<protected> -d '{}' -H 'Content-Type: application/json'
 ```
 
-→ 写入 `neutralize.fields` + `neutralize.success`。
+→ `neutralize.fields` + `neutralize.success` に書き込む。
 
-### A3. 内容门 — 「菜单/权限从哪来？」
+### A3. コンテンツゲート — 「メニュー/権限はどこから来るか？」
 
 ```bash
 grep -rhoaE '"/api[^"]*(permission|perm|role|menu|acl|resource|nav)[^"]*"' js | sort -u
@@ -70,24 +70,24 @@ grep -rhoaE 'userRouteAuth|getResultTree|routeMap|routeLink|hasPermission|checkA
 grep -rhoaE '([A-Z_][A-Z0-9_]*):\{name:"[^"]*",link:"/[^"]+"\}' js | head
 ```
 
-**两层数据**（常见企业后台）：
+**2 層のデータ**（よくある企業向け管理画面）：
 
-| API | 典型 payload | 消费方 |
+| API | 典型的な payload | 消費側 |
 |---|---|---|
-| `.../role_permissions` | `{ permissions: string[], role_type }` | 路由守卫、按钮级 ACL |
-| `.../permissions/all` | `tree[{ code, position, children }]` | 侧栏菜单渲染 |
-| bundle 内 `userRouteAuth` | `{ CODE: { url, name? } }` | code → 前端 path |
-| bundle 内 `routeMap` | `{ KEY: { name, link } }` | 别名解析（webpack `o.DASHBOARD`） |
+| `.../role_permissions` | `{ permissions: string[], role_type }` | ルートガード、ボタン単位の ACL |
+| `.../permissions/all` | `tree[{ code, position, children }]` | サイドバーメニューの描画 |
+| bundle 内の `userRouteAuth` | `{ CODE: { url, name? } }` | code → フロントエンド path |
+| bundle 内の `routeMap` | `{ KEY: { name, link } }` | 別名の解決（webpack `o.DASHBOARD`） |
 
-读消费方代码确认：`getResultTree(tree, permissions)` 如何过滤、`v-if` / `hasAuth(code)` 检查哪个字段。
+消費側のコードを読んで確認する：`getResultTree(tree, permissions)` がどうフィルタするか、`v-if` / `hasAuth(code)` がどのフィールドをチェックするか。
 
-**手工 forge**（小站点）：构建 permissive payload → `stubs`。
+**手動 forge**（小規模サイト）：permissive な payload を構築 → `stubs`。
 
-**完整权限树还原**（大站点，侧栏/子模块仍空白）：见 **I 节**。
+**完全な権限ツリーの復元**（大規模サイトでサイドバー/サブモジュールがまだ空白）：**I 節**を参照。
 
 ---
 
-## B. config.json 模板
+## B. config.json テンプレート
 
 ```json
 {
@@ -150,18 +150,18 @@ grep -rhoaE '([A-Z_][A-Z0-9_]*):\{name:"[^"]*",link:"/[^"]+"\}' js | head
 }
 ```
 
-字段说明：
+フィールドの説明：
 - `runtimeMode`：`depth`（Puppeteer）、`coverage`（browser MCP）、`both`
-- `cookies[].value` 前缀：`b64json:` → base64(JSON)；`json:` → 原始 JSON；无前缀 → 字面量
-- `forward: true` 转发真实请求并改写码字段；`false` 完全离线 stub
-- `mockTier`：coverage 模式 preload 启用层级，如 `L1+L2`、`L1+L2+L3`
-- `routes` 来自 `routes.txt`；forge 菜单后 harness 自动追加 `<a href>`
-- `captureResponses` / `recordWs` 仅 depth 模式有效
-- `waitUntil`：大型 SPA 用 `domcontentloaded`，避免 `networkidle2` 挂起
-- `routeTimeout`：单路由 `page.goto` 超时（毫秒）
-- `proxy`：Puppeteer `--proxy-server`；也可设 `HTTP_PROXY` / `HTTPS_PROXY`
+- `cookies[].value` の接頭辞：`b64json:` → base64(JSON)。`json:` → 生の JSON。接頭辞なし → リテラル
+- `forward: true` は実際のリクエストを転送してコードフィールドを書き換える。`false` は完全オフラインの stub
+- `mockTier`：coverage モードで preload が有効化する階層。例 `L1+L2`、`L1+L2+L3`
+- `routes` は `routes.txt` から取得。メニューを forge すると harness が `<a href>` を自動で追加する
+- `captureResponses` / `recordWs` は depth モードでのみ有効
+- `waitUntil`：大規模 SPA では `domcontentloaded` を使い、`networkidle2` でのハングを避ける
+- `routeTimeout`：単一ルートの `page.goto` タイムアウト（ミリ秒）
+- `proxy`：Puppeteer の `--proxy-server`。`HTTP_PROXY` / `HTTPS_PROXY` でも設定可能
 
-### B1. 双 stub 模板（role_permissions + permissions/all）
+### B1. 2 つの stub テンプレート（role_permissions + permissions/all）
 
 ```json
 "stubs": [
@@ -193,13 +193,13 @@ grep -rhoaE '([A-Z_][A-Z0-9_]*):\{name:"[^"]*",link:"/[^"]+"\}' js | head
 ]
 ```
 
-外层字段名（`response_code` / `code` / `data`）须与 A2 拦截器门一致；`permissions` 须覆盖 tree 中所有 leaf code。
+外側のフィールド名（`response_code` / `code` / `data`）は A2 のインターセプタゲートと一致していること。`permissions` は tree 内のすべての leaf code をカバーしていること。
 
 ---
 
-## C. coverage 模式：preload 配置
+## C. coverage モード：preload 設定
 
-编辑 `scripts/preload.js` 顶部 `CONFIG` 对象，或通过 CDP 注入前替换：
+`scripts/preload.js` 先頭の `CONFIG` オブジェクトを編集するか、CDP で注入する前に置き換える：
 
 ```javascript
 const CONFIG = {
@@ -211,14 +211,14 @@ const CONFIG = {
   neutralizeVueRouter: true,
   observe: { storageReads: false, cookieReads: false, xhrHeaders: true },
   neutralize: { fields: ['response_code', 'code'], success: 0 },
-  stubs: [ /* 同 config.json stubs */ ],
+  stubs: [ /* config.json の stubs と同じ */ ],
   apiPattern: /\/(api|apis|v\d+|dev|internal|graphql)\//i,
 };
 ```
 
-验证：`window.__API_RECON_PRELOAD__ === true` 且 pathname 稳定。
+検証：`window.__API_RECON_PRELOAD__ === true` かつ pathname が安定していること。
 
-导出录制结果：
+記録結果のエクスポート：
 
 ```javascript
 JSON.stringify({
@@ -231,27 +231,27 @@ JSON.stringify({
 
 ---
 
-## D. preload / runtime Hook 能力
+## D. preload / runtime Hook の機能
 
-preload（coverage）与 runtime_harvest（depth）内置的浏览器 Hook 能力及覆盖范围：
+preload（coverage）と runtime_harvest（depth）に組み込まれたブラウザ Hook 機能とそのカバレッジ：
 
-| Hook 能力 | 对 API 发现的价值 | 覆盖 |
+| Hook 機能 | API 発見への価値 | カバレッジ |
 |---|---|---|
-| Hook fetch / XHR.open | 录请求 URL/方法 | ✅ `recordDetail` + `__API_RECON_LOG__` |
-| Hook XHR.setRequestHeader | 发现 Authorization 等头 | ✅ `observe.xhrHeaders` |
-| Hook localStorage/cookie 读 | 确认会话键名 | ⚠️ 可选 `observe.storageReads/cookieReads` |
-| Vue 获取路由 | 补全 frontendRoutes | ✅ `__API_RECON_ROUTES__`（已加载路由） |
-| Vue 路由守卫中和 / 登录跳转阻断 | 撑开模块触发 API | ✅ `neutralizeVueRouter` + 原生跳转中和 |
-| React 获取路由 | 补路由 | ⚠️ 静态 + 点击；无专用 Hook |
-| 页面跳转阻断（登录 path） | 留页分析 | ⚠️ 仅阻断登录 path，避免挡业务导航 |
-| Hook 加密库（CryptoJS/SM 等） | 加密参数 → 明文 API body | ❌ 须手工 Hook 加密函数入参；结论写 config |
-| 反调试 bypass | 否则 runtime 录不到 API | ❌ 须手工处理；静态仍可用 |
+| Hook fetch / XHR.open | リクエスト URL/メソッドを記録 | ✅ `recordDetail` + `__API_RECON_LOG__` |
+| Hook XHR.setRequestHeader | Authorization などのヘッダを発見 | ✅ `observe.xhrHeaders` |
+| Hook localStorage/cookie の読み取り | セッションキー名を確認 | ⚠️ 任意 `observe.storageReads/cookieReads` |
+| Vue のルート取得 | frontendRoutes を補完 | ✅ `__API_RECON_ROUTES__`（読み込み済みルート） |
+| Vue ルートガードの中和 / ログイン遷移の遮断 | モジュールを広げて API をトリガー | ✅ `neutralizeVueRouter` + ネイティブ遷移の中和 |
+| React のルート取得 | ルートを補完 | ⚠️ 静的 + クリック。専用 Hook なし |
+| ページ遷移の遮断（ログイン path） | ページに留まって分析 | ⚠️ ログイン path のみ遮断し、業務ナビゲーションを妨げない |
+| 暗号化ライブラリの Hook（CryptoJS/SM など） | 暗号化パラメータ → 平文の API body | ❌ 暗号化関数の入力を手動で Hook する必要あり。結論は config に記載 |
+| アンチデバッグの bypass | ないと runtime で API を記録できない | ❌ 手動対応が必要。静的解析は引き続き利用可能 |
 
 ---
 
-## E. Endpoint 提取正则（静态过少时）
+## E. Endpoint 抽出の正規表現（静的が少なすぎる場合）
 
-在 `harvest_static.py` 的 `extract_endpoints` 放宽，或手动：
+`harvest_static.py` の `extract_endpoints` を緩めるか、手動で：
 
 ```bash
 grep -rhoaE '"/[a-z][A-Za-z0-9_/\-]{3,}"' js | sort -u
@@ -260,60 +260,60 @@ grep -rhoaE '/api/[a-zA-Z0-9_./-]+' js | sort -u
 
 ---
 
-## F. 排障
+## F. トラブルシューティング
 
-| 现象 | 原因 → 处理 |
+| 現象 | 原因 → 対処 |
 |---|---|
-| 静态 API 很少 | endpoint 方言不匹配 → 放宽正则（D 节） |
-| chunk 数 ≪ manifest | CSS-only 或未部署 chunk；404 已重试 |
-| runtime 仍显示登录页 | 渲染门错误 → 复查 A1：键名、容器、编码、domain |
-| 进壳但模块空白 | 内容门 → forge 菜单（A3）；`routes` path 可能不对 |
-| 每路由只有 bootstrap/locale | 权限码不全 → I 节权限树还原；检查 `role_permissions` + `permissions/all` 双 stub |
-| 侧栏有项但子页空白 | tree 缺 intermediate 节点或 code 与 `userRouteAuth` 不一致 |
-| 每个 API 都跳登录 | 拦截器门 → 确认 `neutralize`；嵌套字段需扩展 walk 逻辑 |
-| WS 帧为 0 | 需用户交互后才 subscribe；加长 `perRouteMs` |
-| 响应体空 | 仅 `forward: true` 时有真实响应 |
-| Chromium 缺失 | 安装 chromium 或设置 `config.chromium` / `CHROMIUM` |
-| Mock 很多仍回登录 | Hook 太晚或缺 `location.href` setter → document-start + preload |
-| 列表全空 | L3 空数组正常；继续点 Tab/设置/详情 |
-| 误把 Redux action 当路由 | 过滤含 get/set/change/clear/toggle/upload 的内部 path |
-| Vue 仍跳登录 | preload 非 document-start → 改注入时机；或 `neutralizeVueRouter: false` 时手动清守卫 |
-| 响应里有 URL 但未进 log | 开 `extractUrlsFromResponse`；或从 `__API_RECON_DETAIL__` 人工提取 |
-| 不知 Authorization 头名 | 开 `observe.xhrHeaders` 或 DevTools 查看请求头 |
-| runtime 极慢 / 超时 | 改 `waitUntil: domcontentloaded`；降 `routeTimeout`；勿用 `networkidle2` |
-| 代理连接失败 | 检查 `proxy` / 环境变量；Puppeteer 与 curl 代理端口一致 |
+| 静的 API が少ない | endpoint の方言が一致しない → 正規表現を緩める（D 節） |
+| chunk 数 ≪ manifest | CSS のみ、または未デプロイの chunk。404 はリトライ済み |
+| runtime でもログインページが表示される | 描画ゲートの誤り → A1 を再確認：キー名、コンテナ、エンコード、domain |
+| シェルには到達するがモジュールが空白 | コンテンツゲート → メニューを forge（A3）。`routes` の path が誤っている可能性 |
+| 各ルートで bootstrap/locale のみ | 権限コードが不完全 → I 節の権限ツリー復元。`role_permissions` + `permissions/all` の2 つの stub を確認 |
+| サイドバーに項目はあるが子ページが空白 | tree に intermediate ノードがない、または code が `userRouteAuth` と一致しない |
+| すべての API でログインへ飛ぶ | インターセプタゲート → `neutralize` を確認。ネストしたフィールドは walk ロジックの拡張が必要 |
+| WS フレームが 0 | ユーザー操作後にしか subscribe しない。`perRouteMs` を延長 |
+| レスポンスボディが空 | `forward: true` のときのみ実際のレスポンスがある |
+| Chromium がない | chromium をインストールするか、`config.chromium` / `CHROMIUM` を設定 |
+| Mock が多いのにログインへ戻る | Hook が遅すぎる、または `location.href` の setter がない → document-start + preload |
+| 一覧がすべて空 | L3 の空配列は正常。タブ/設定/詳細をクリックし続ける |
+| Redux の action をルートと誤認 | get/set/change/clear/toggle/upload を含む内部 path を除外 |
+| Vue が依然としてログインへ飛ぶ | preload が document-start でない → 注入タイミングを変更。または `neutralizeVueRouter: false` のときはガードを手動で消す |
+| レスポンスに URL があるが log に入らない | `extractUrlsFromResponse` を有効化。または `__API_RECON_DETAIL__` から手動抽出 |
+| Authorization ヘッダ名が不明 | `observe.xhrHeaders` を有効化するか、DevTools でリクエストヘッダを確認 |
+| runtime が極端に遅い / タイムアウト | `waitUntil: domcontentloaded` に変更。`routeTimeout` を下げる。`networkidle2` を使わない |
+| プロキシ接続に失敗 | `proxy` / 環境変数を確認。Puppeteer と curl のプロキシポートを一致させる |
 
 ---
 
-## G. hardened 目标
+## G. hardened なターゲット
 
-服务端逐步校验会话（不可 forge 的签名 cookie、服务端渲染且不可 stub 的菜单）时，runtime 会在 shell 处卡住。预期行为：
+サーバー側でセッションを段階的に検証する場合（forge 不可の署名付き cookie、サーバー側レンダリングで stub 不可のメニューなど）、runtime はシェルで止まる。想定される挙動：
 
-- **静态足够做 endpoint 枚举** — 模块 path 在代码里
-- 若授权允许，用**真实会话**跑同一 harness：`forward: true`、无需 neutralize，捕获真实 methods/params/responses
-
----
-
-## H. 单次任务清单
-
-1. 确认授权范围
-2. **阅读** `scripts/harvest_static.py` → 按目标调整 → 运行 → 审 `api_static.txt`、`routes.txt`
-3. **Phase 1b**：path 锚点扩窗 + 绑定层 → `param_candidates.json`（J 节）
-4. 逆向 A1/A2/A3 → 写站点专属 `config.json`
-5. **阅读并调整** `runtime_harvest.js` / `preload.js` 后再执行
-6. `runtimeMode=depth`：`npm install` → 运行调整后的 harvest 脚本
-7. `runtimeMode=coverage/both`：document-start 注入调整后的 preload → browser MCP 动态枚举 + **参数触发矩阵**
-8. 模块不渲染 → **I 节权限树还原** → patch stubs → 重跑
-9. 参数多样本 diff + 错误反推 → `params_merged.json`
-10. 合并 → `site_map.json` + `api_merged.txt`，诚实标注覆盖、缺口及脚本改动点
+- **静的解析だけで endpoint の列挙は可能** — モジュールの path はコード内にある
+- 許可があれば、**実際のセッション**で同じ harness を実行する：`forward: true`、neutralize 不要で、実際の methods/params/responses を取得できる
 
 ---
 
-## I. 权限树还原（Phase 4 深化）
+## H. 単一タスクのチェックリスト
 
-当 forge 简单 `menus: [{ path, show: true }]` 无效、子模块仍不 mount 时使用。
+1. 許可範囲を確認する
+2. `scripts/harvest_static.py` を**読み** → 対象に合わせて調整 → 実行 → `api_static.txt`、`routes.txt` を確認
+3. **Phase 1b**：path アンカーの拡張ウィンドウ + バインディング層 → `param_candidates.json`（J 節）
+4. A1/A2/A3 を逆解析 → サイト固有の `config.json` を書く
+5. `runtime_harvest.js` / `preload.js` を**読み、調整**してから実行する
+6. `runtimeMode=depth`：`npm install` → 調整後の harvest スクリプトを実行
+7. `runtimeMode=coverage/both`：document-start で調整後の preload を注入 → browser MCP で動的列挙 + **パラメータトリガーマトリクス**
+8. モジュールが描画されない → **I 節の権限ツリー復元** → stub を patch → 再実行
+9. パラメータの複数サンプル diff + エラーからの逆推 → `params_merged.json`
+10. マージ → `site_map.json` + `api_merged.txt`。カバレッジ、ギャップ、スクリプトの変更点を正直に明記する
 
-### I1. 定位 auth 模块
+---
+
+## I. 権限ツリーの復元（Phase 4 の深化）
+
+`menus: [{ path, show: true }]` という単純な forge が効かず、サブモジュールがまだ mount されない場合に使う。
+
+### I1. auth モジュールの特定
 
 ```bash
 grep -l 'userRouteAuth' js/*.js
@@ -321,88 +321,88 @@ grep -l 'routeMap\|routeLink' js/*.js
 grep -rhoaE 'getResultTree|role_permissions|permissions/all' js | head
 ```
 
-记录：**权限 API path**、**响应字段名**、**消费 chunk 文件名**。
+記録する：**権限 API の path**、**レスポンスのフィールド名**、**消費する chunk のファイル名**。
 
-### I2. 提取 routeMap
+### I2. routeMap の抽出
 
 ```bash
 python3 scripts/extract_route_map.py recon/js recon/
-# 产出 recon/route_map.json
+# 生成物 recon/route_map.json
 ```
 
-若 `[!] no routeMap pattern found`：放宽 `extract_route_map.py` 中正则，或手工 grep：
+`[!] no routeMap pattern found` が出た場合：`extract_route_map.py` 内の正規表現を緩めるか、手動で grep する：
 
 ```bash
 grep -rhoaE '([A-Z_][A-Z0-9_]*):\{name:"[^"]*",link:"/[^"]+"\}' js | head -20
 ```
 
-### I3. 构建权限树 + stub
+### I3. 権限ツリーの構築 + stub
 
 ```bash
 python3 scripts/build_perm_tree.py recon/js recon/ --config recon/config.json
 ```
 
-脚本逻辑：
-1. 解析 `userRouteAuth={MONITOR:{url:...},...}`（含 webpack 别名 `He=o.DASHBOARD`）
-2. 用 `route_map.json` 解析 alias → 真实 path
-3. 按 code 前缀推断 parent（`MONITOR_ALERT` → `MONITOR`）
-4. 输出 `permissions_tree.json`、`permissions_all_stub.json`、`role_permissions_stub.json`
-5. `--config` 时自动写入 `config.json` 的 `stubs` 与扩展 `routes`
+スクリプトのロジック：
+1. `userRouteAuth={MONITOR:{url:...},...}` を解析（webpack の別名 `He=o.DASHBOARD` を含む）
+2. `route_map.json` で alias → 実際の path を解決
+3. code の接頭辞から parent を推測（`MONITOR_ALERT` → `MONITOR`）
+4. `permissions_tree.json`、`permissions_all_stub.json`、`role_permissions_stub.json` を出力
+5. `--config` 指定時は `config.json` の `stubs` と拡張 `routes` に自動書き込み
 
-**按目标调整**（在脚本顶部）：
-- `DEFAULT_ROOTS`：顶级模块 code 列表
-- `DEFAULT_PREFIX_PARENT`：`PREFIX_` → parent 映射
-- `DEFAULT_EXTRA_PARENT`：非前缀关系的 orphan 节点
+**対象に合わせた調整**（スクリプト先頭）：
+- `DEFAULT_ROOTS`：トップレベルモジュールの code リスト
+- `DEFAULT_PREFIX_PARENT`：`PREFIX_` → parent のマッピング
+- `DEFAULT_EXTRA_PARENT`：接頭辞関係にない orphan ノード
 
-### I4. 校验 stub 一致性
+### I4. stub の一貫性の検証
 
 ```bash
-# permissions 数量应 ≈ userRouteAuth 条目数
+# permissions の数は ≈ userRouteAuth のエントリ数であるべき
 wc -l recon/perm_codes_all.txt
-# routes 应覆盖 route_map 全部 link
+# routes は route_map のすべての link をカバーすべき
 python3 -c "import json; m=json.load(open('recon/route_map.json')); r=set(json.load(open('recon/config.json'))['routes']); print('missing', [v['link'] for v in m.values() if v['link'] not in r])"
 ```
 
-### I5. 重跑 runtime 并对比
+### I5. runtime の再実行と比較
 
 ```bash
 node recon/runtime_harvest.js recon/config.json
-# 对比 forge 前后 runtime_api.json 条数；检查 /attack、/asset 等是否出现模块 API
+# forge 前後で runtime_api.json の件数を比較。/attack、/asset などにモジュール API が現れるか確認
 ```
 
-| forge 前 | forge 后（成功） |
+| forge 前 | forge 後（成功） |
 |---|---|
-| 每路由相同 3–5 条 bootstrap | 不同路由触发不同 module API |
-| 仅 `/api/locale/language` | 出现 `/api/web/...` 模块 endpoint |
-| `routes.txt` 个位路由 | `routes` 80–110+ 来自 route_map |
+| 各ルートで同じ 3〜5 件の bootstrap | ルートごとに異なる module API がトリガーされる |
+| `/api/locale/language` のみ | `/api/web/...` のようなモジュール endpoint が現れる |
+| `routes.txt` が数件のルート | `routes` が route_map 由来の 80〜110+ になる |
 
-### I6. 仍失败时
+### I6. それでも失敗する場合
 
-- **coverage 模式**：点击侧栏 + Tab，权限 gating 可能在交互后才请求
-- **stub 字段**：对比真实 API（curl + 真实 session）与 stub 的 nesting
-- **额外守卫**：grep `hasPermission|checkRole|func.` 等按钮级检查，扩展 `role_permissions.permissions`
-- **静态兜底**：模块 API path 仍在 `api_static.txt`，runtime 仅补 METHOD/body；参数保留 `param_candidates.json` + 已录样本
+- **coverage モード**：サイドバー + タブをクリックする。権限 gating は操作後に初めてリクエストする可能性がある
+- **stub フィールド**：実際の API（curl + 実セッション）と stub のネスト構造を比較する
+- **追加のガード**：`hasPermission|checkRole|func.` などのボタン単位チェックを grep し、`role_permissions.permissions` を拡張する
+- **静的解析でフォールバック**：モジュール API の path は `api_static.txt` に残っており、runtime は METHOD/body を補うだけ。パラメータは `param_candidates.json` + 記録済みサンプルとして保持する
 
 ---
 
-## J. 参数逆向（Phase 1b / 5b / 5c）
+## J. パラメータ逆解析（Phase 1b / 5b / 5c）
 
-**方法论，非通用脚本。** 找 path 用正则；找参数用锚点扩窗 + UI 绑定链 + 多样本 diff + 错误反推。
+**方法論であり、汎用スクリプトではない。** path の探索は正規表現。パラメータの探索はアンカー拡張ウィンドウ + UI バインディングチェーン + 複数サンプル diff + エラーからの逆推。
 
-### J1. 锚点扩窗 — 从 path 找组包对象
+### J1. アンカー拡張ウィンドウ — path から組み立てオブジェクトを探す
 
 ```bash
-# 以 Phase 1 已知 path 为锚
+# Phase 1 で判明した path をアンカーとする
 grep -n '"/api/user/list"' js/*.js
 grep -rhoaE '.{0,120}("/api[^"]+").{0,200}' js | head
 grep -rhoaE '(params|data|body|payload)\s*:\s*\{' js | head
 grep -rhoaE '(get|post|put|delete|patch)\([^,]+,\s*\{' js | head
 ```
 
-### J2. 包装层与传输形态
+### J2. ラッパー層と転送形態
 
 ```bash
-# axios / 统一 request
+# axios / 統一 request
 grep -rhoaE '(axios|request)\.(get|post|put|delete|patch)\(' js | head
 grep -rhoaE 'interceptors\.(request|response)' js | head
 
@@ -413,12 +413,12 @@ grep -rhoaE '\$[a-zA-Z_]+\s*:\s*(Int|String|Boolean|\[)' js | head
 # FormData / multipart
 grep -rhoaE 'FormData|\.append\(' js | head
 
-# 路径参数
+# パスパラメータ
 grep -rhoaE 'path:\s*"/[^"]*:[^"]+"' js | head
 grep -rhoaE 'useParams|route\.params|\$route\.params' js | head
 ```
 
-### J3. 校验门 — 必填 / 格式 / 枚举
+### J3. 検証ゲート — 必須 / 形式 / 列挙
 
 ```bash
 grep -rhoaE '(required|message|pattern|enum|validator)\s*:' js | head
@@ -427,74 +427,74 @@ grep -rhoaE 'rules\s*:\s*\[|name:\s*["\'][a-zA-Z_]+["\']' js | head
 grep -rhoaE 'label.*value|options\s*:\s*\[' js | head
 ```
 
-### J4. 绑定层 — 表单 → API
+### J4. バインディング層 — フォーム → API
 
 ```bash
 grep -rhoaE 'onFinish|handleSubmit|getFieldsValue|validateFields' js | head
 grep -rhoaE '(pick|omit|transform|dayjs|moment)\(' js | head
 ```
 
-runtime 补位：DevTools → Network → 请求 → **发起程序**（call stack）从 `fetch`/`send` 往上追组包函数。
+runtime での補完：DevTools → Network → リクエスト → **イニシエータ**（call stack）で `fetch`/`send` から上へ組み立て関数を追う。
 
-### J5. 加密参数
+### J5. 暗号化パラメータ
 
 ```bash
 grep -rhoaE 'encrypt|decrypt|sign|CryptoJS|sm2|sm3|sm4|RSA|AES' js | head
 ```
 
-**勿在密文上猜字段** — Hook 加密函数**入参**，在加密前录 plaintext payload；结论写 `config.json` / `param_candidates.json`。
+**暗号文からフィールドを推測しない** — 暗号化関数の**引数**を Hook し、暗号化前の平文 payload を記録する。結論は `config.json` / `param_candidates.json` に書く。
 
-### J6. 参数触发矩阵（Phase 3 必做）
+### J6. パラメータトリガーマトリクス（Phase 3 で必須）
 
-对每模块按操作各录一次，diff 请求 body/query：
+各モジュールで操作ごとに 1 回ずつ記録し、リクエストの body/query を diff する：
 
-| 操作 | 关注 |
+| 操作 | 注目点 |
 |---|---|
-| 列表首屏 | 分页默认值 |
-| 搜索 | keyword、filters |
-| 高级筛选 | optional 字段 |
-| 新建/编辑 | 完整 entity |
-| 批量/导出 | `ids[]`、`exportType` |
-| 排序/翻页 | `sortField`、`order` |
+| 一覧の初回画面 | ページングの既定値 |
+| 検索 | keyword、filters |
+| 高度なフィルタ | optional フィールド |
+| 新規作成/編集 | 完全な entity |
+| 一括/エクスポート | `ids[]`、`exportType` |
+| 並び替え/ページ送り | `sortField`、`order` |
 
-产出 `param_samples.json`：`[{ "path", "method", "action": "search", "body", "query", "headers" }]`
+産出 `param_samples.json`：`[{ "path", "method", "action": "search", "body", "query", "headers" }]`
 
-### J7. 置信度规则
+### J7. 信頼度のルール
 
-| 置信度 | 条件 |
+| 信頼度 | 条件 |
 |---|---|
-| **高** | 静态 callsite + runtime ≥2 样本一致 |
-| **中** | 仅静态，或仅 1 次 runtime |
-| **低** | 响应/错误反推，未二次验证 |
-| **待触发** | 静态已知字段，UI/权限未跑到 |
+| **高** | 静的な callsite + runtime で 2 サンプル以上が一致 |
+| **中** | 静的なみ、または runtime が 1 回のみ |
+| **低** | レスポンス/エラーからの逆推で、二重検証なし |
+| **トリガー待ち** | 静的に既知のフィールドだが、UI/権限が到達していない |
 
-### J8. 场景快配
+### J8. シナリオ別の手順
 
-| 场景 | 顺序 |
+| シナリオ | 順序 |
 |---|---|
-| REST 列表页 | J1 组包对象 → J6 四次 diff → J3 rules |
-| 新建/编辑表单 | J3 Form name → J4 submit 链 → runtime 提交 + 故意留空看 400 |
-| GraphQL | J2 variables 声明 → runtime 各 operation 录 variables |
-| 加密 body | J5 Hook 入参 → 加密前字段即真实 params |
+| REST の一覧ページ | J1 で組み立てオブジェクト → J6 で 4 回 diff → J3 で rules |
+| 新規作成/編集フォーム | J3 で Form name → J4 で submit チェーン → runtime で送信し、わざと空にして 400 を見る |
+| GraphQL | J2 で variables の宣言 → runtime で各 operation の variables を記録 |
+| 暗号化 body | J5 で引数を Hook → 暗号化前のフィールドが実際の params |
 
-### J9. 与 api-recon 阶段映射
+### J9. api-recon の段階との対応
 
-| api-recon | 参数 recon |
+| api-recon | パラメータ recon |
 |---|---|
-| Phase 1 静态 | J1 锚点扩窗 |
-| Phase 2 A2 拦截器 | 全局注入字段（tenantId、sign） |
-| Phase 3 runtime | J6 触发矩阵 + `param_samples.json` |
-| Phase 4 权限树 | 不同模块表单不同 → 权限够才触发全字段 |
-| Phase 5 合并 | `params_merged.json` + 置信度；勿单样本定必填 |
+| Phase 1 静的 | J1 アンカー拡張ウィンドウ |
+| Phase 2 A2 インターセプタ | グローバル注入フィールド（tenantId、sign） |
+| Phase 3 runtime | J6 トリガーマトリクス + `param_samples.json` |
+| Phase 4 権限ツリー | モジュールごとにフォームが異なる → 権限が足りて初めて全フィールドをトリガーできる |
+| Phase 5 マージ | `params_merged.json` + 信頼度。単一サンプルで必須を確定しない |
 
-### J10. 排障
+### J10. トラブルシューティング
 
-| 现象 | 处理 |
+| 現象 | 対処 |
 |---|---|
-| 静态有字段名 runtime 从未出现 | 标注「待触发」；补权限树 / 点高级筛选 / 联动 select 各 option |
-| 同 path 不同 body 形状 | 正常 — 按 `action` 分条记录，勿强行合并 schema |
-| stub 响应假但想看 params | **看 outbound 请求** body/headers，勿从 stub 响应反推 |
-| 400 报 nested field | 注意外层包装 `data`/`bizData`/`variables` |
-| GraphQL 只见 operation 名 | 展开 `variables` JSON；静态找 `$var: Type` |
+| 静的にフィールド名があるが runtime に一度も現れない | 「トリガー待ち」と明記。権限ツリーを補う / 高度なフィルタをクリックする / 連動 select の各 option を選ぶ |
+| 同じ path で body の形状が異なる | 正常 — `action` ごとに分けて記録し、schema を無理にマージしない |
+| stub のレスポンスは偽物だが params を見たい | **outbound リクエスト**の body/headers を見る。stub のレスポンスから逆推しない |
+| 400 で nested field が報告される | 外側のラッピング `data`/`bizData`/`variables` に注意 |
+| GraphQL で operation 名しか見えない | `variables` の JSON を展開。静的で `$var: Type` を探す |
 
 ---

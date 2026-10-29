@@ -104,8 +104,11 @@ func TestSideLongExchangeAndSnapshotCompactionAreBounded(t *testing.T) {
 			snap := Snapshot{Request: fixture(), Model: Model{WindowTokens: 32000}}
 			var history []Exchange
 			if hugeHistory {
+				// 中国語のフィクスチャは、トークン見積もりがバイト数依存であることを検証するための
+				// CJK 詰め物として原文のまま維持する。
 				history = []Exchange{{Ordinal: 1, Question: "earlier", Answer: strings.Repeat("历史依据ABC", 14000), Status: "completed"}}
 			} else {
+				// 同上：CJK の詰め物フィクスチャのため中国語のまま。
 				snap.Request.Messages = append([]llm.Message{llm.UserText(strings.Repeat("old tool evidence 中文", 9000))}, snap.Request.Messages...)
 			}
 			original := mustJSON(t, snap)
@@ -305,7 +308,7 @@ func TestSideOverflowWithoutReductionDoesNotRepeatAnswer(t *testing.T) {
 	}}
 	snapshot := Snapshot{Request: llm.CompletionRequest{MaxTokens: 128, Messages: []llm.Message{llm.UserText("tiny")}}}
 	out, _, err := (SideQuestionService{p}).Respond(t.Context(), snapshot, "question", Replay{}, ContextOptions{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "未能进一步缩减") || answers != 1 || summaries != 1 || out.Usage.InputTokens != 8 {
+	if err == nil || !strings.Contains(err.Error(), "これ以上コンテキストを縮小できなかった") || answers != 1 || summaries != 1 || out.Usage.InputTokens != 8 {
 		t.Fatalf("no-progress recovery: %d %d %+v %v", answers, summaries, out, err)
 	}
 }
