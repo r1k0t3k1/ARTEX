@@ -1,44 +1,44 @@
 # syntax=docker/dockerfile:1
 #
-# 运行镜像（不在镜像里编译）：只装常用工具，放入**预编译好的 Linux 单二进制**。
-# 二进制由 CI 的 binaries job 交叉编译（纯 Go、无 QEMU），按目标架构放在
-# 构建上下文的 dist/<TARGETARCH>/artex。这样多架构构建时 arm64 只需模拟 apt 层，
-# 不再模拟 Next/Go 编译，速度快得多。
+# 実行イメージ（イメージ内ではコンパイルしない）：よく使うツールを入れるだけに留め、**ビルド済みの Linux 単一バイナリ**を配置する。
+# バイナリは CI の binaries ジョブがクロスコンパイル（純 Go、QEMU 不要）し、対象アーキテクチャ別に
+# ビルドコンテキストの dist/<TARGETARCH>/artex へ置く。これによりマルチアーキテクチャビルドでも arm64 は apt 層の
+# エミュレーションだけで済み、Next/Go のコンパイルをエミュレートせずに済むため大幅に速い。
 #
-# 本地手动构建镜像时，先自行准备二进制：
+# ローカルで手動ビルドする場合は、先にバイナリを自分で用意する：
 #   cd web && npm run build:static && cd ..
 #   cp -r web/out server/webui/dist
 #   CGO_ENABLED=0 GOARCH=amd64 go build -tags embedui -o dist/amd64/artex ./cmd/artex
 #   docker build -t artex:local .
 FROM python:3.12-slim-bookworm
 ARG TARGETARCH
-# 常用工具：ripgrep / curl / vim，加一批 recon 常备件（按需增删）。
-# Node 从 NodeSource 装 20.x：bookworm 自带的 apt nodejs 是 18，Playwright 要求 >=20。
+# よく使うツール：ripgrep / curl / vim に加え、偵察用の定番ツール一式（必要に応じて増減）。
+# Node は NodeSource から 20.x を導入：bookworm 標準の apt nodejs は 18 で、Playwright は >=20 を要求する。
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates ripgrep curl wget vim git jq unzip \
       dnsutils iputils-ping netcat-openbsd inetutils-telnet whois nmap \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
-# 预装 Playwright MCP 与 CLI（全局），运行时不再 npx 联网下载。
-# @playwright/mcp：browser MCP 直接 `npx @playwright/mcp`（已全局装好，无需 -y/@latest）。
-# @playwright/cli：提供 playwright-cli，装完顺带 --help 验证可执行。
-# 再装 playwright（提供浏览器管理），装完用 --with-deps 预置 chromium 及其系统依赖，
-# 这样容器内 MCP/CLI 首次启动即可用，不再联网下载浏览器。
+# Playwright MCP と CLI を（グローバルに）プリインストールし、実行時に npx でネットワーク取得しないようにする。
+# @playwright/mcp：ブラウザ MCP は直接 `npx @playwright/mcp`（グローバル導入済みなので -y/@latest 不要）。
+# @playwright/cli：playwright-cli を提供。導入後に --help で実行可能か確認する。
+# 続けて playwright（ブラウザ管理用）を導入し、--with-deps で chromium とそのシステム依存をプリセットする。
+# これによりコンテナ内の MCP/CLI は初回起動からすぐ使え、ブラウザをネットワーク取得しなくて済む。
 RUN npm install -g @playwright/mcp@latest @playwright/cli@latest playwright@latest \
     && playwright-cli --help \
     && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-# 预编译好的对应架构二进制（dist/amd64/artex 或 dist/arm64/artex）
+# 対応アーキテクチャ向けのビルド済みバイナリ（dist/amd64/artex または dist/arm64/artex）
 COPY dist/${TARGETARCH}/artex /app/artex
-# 守护启动脚本：进程退出后按退出码决定是否重新拉起，页面一键更新靠它完成换装。
-# 它同时负责把 SIGTERM 转发给 artex —— docker stop 只把信号发给 PID 1，
-# 不转发的话 artex 收不到、做不了优雅关闭，10 秒后被 SIGKILL 硬杀。
+# デーモン起動スクリプト：プロセス終了後に終了コードに応じて再起動するか決定し、ページ上のワンクリック更新は
+# これが差し替えを完了させる。また SIGTERM を artex へ転送する役割も担う——docker stop は PID 1 にしか
+# シグナルを送らないため、転送しないと artex は受け取れず、優雅なシャットダウンができず 10 秒後に SIGKILL で強制終了される。
 COPY start.sh /app/start.sh
 RUN chmod +x /app/artex /app/start.sh
 COPY skills/ /app/skills/
-# data/（SQLite + jwt.key）持久化点
+# data/（SQLite + jwt.key）の永続化ポイント
 VOLUME ["/app/data"]
 EXPOSE 8787 8788
 ENTRYPOINT ["/app/start.sh"]

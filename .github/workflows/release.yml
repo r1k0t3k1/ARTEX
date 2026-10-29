@@ -4,10 +4,10 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # 创建 Release 需要
+  contents: write # Release の作成に必要
 
 jobs:
-  # ① 前端静态导出（一次），产物给交叉编译各平台复用
+  # ① フロントエンドの静的エクスポート（1 回のみ）、成果物を各プラットフォームのクロスコンパイルで再利用
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -26,7 +26,7 @@ jobs:
           name: web-dist
           path: web/out
 
-  # ② 五平台交叉编译（内嵌前端）+ 打 zip
+  # ② 5 プラットフォームのクロスコンパイル（フロントエンド埋め込み）+ zip 化
   binaries:
     needs: frontend
     runs-on: ubuntu-latest
@@ -55,8 +55,8 @@ jobs:
           ARTEX_BUILD_VERSION: ${{ github.ref_name }}
           ARTEX_SKIP_FRONTEND: "1"
           ARTEX_SKIP_NPM_CI: "1"
-          # UPX 自解压 ELF 在部分 Linux 内核、虚拟化和安全策略下会崩溃。
-          # Release 使用 Go linker 裁剪和 zip 压缩，优先保证可移植性。
+          # UPX の自己解凍 ELF は一部の Linux カーネル、仮想化、セキュリティポリシー下でクラッシュする。
+          # Release では Go リンカによる削減と zip 圧縮を使い、移植性を優先する。
           ARTEX_COMPRESS: "0"
           ARTEX_PACKAGE: "1"
           ARTEX_PACKAGE_DIR: dist
@@ -69,14 +69,14 @@ jobs:
         with:
           name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
           path: "dist/*.zip"
-      # Linux 生二进制单独上传，供 docker job 复用（免在镜像里重编前端+Go）
+      # Linux の生バイナリは別途アップロードし、docker ジョブで再利用する（イメージ内でフロントエンド+Go を再コンパイルしない）
       - if: matrix.goos == 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: bin-linux-${{ matrix.goarch }}
           path: dist/artex-linux-${{ matrix.goarch }}/artex
 
-  # ③ 汇总所有 zip → 创建 GitHub Release
+  # ③ すべての zip を集約 → GitHub Release を作成
   release:
     needs: binaries
     runs-on: ubuntu-latest
@@ -96,13 +96,13 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
 
-  # ④ 多架构镜像 → 推 Docker Hub（复用 binaries 编好的 Linux 二进制，
-  #    镜像里只装工具 + 放二进制；arm64 仅需模拟 apt 层，构建快很多）
+  # ④ マルチアーキテクチャイメージ → Docker Hub へプッシュ（binaries がビルドした Linux バイナリを再利用し、
+  #    イメージ内ではツール導入 + バイナリ配置のみ。arm64 は apt 層のエミュレーションだけで済み、ビルドが大幅に速い）
   docker:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # 取 Dockerfile 与 skills/
+      - uses: actions/checkout@v4 # Dockerfile と skills/ を取得
       - uses: actions/download-artifact@v4
         with:
           name: bin-linux-amd64
