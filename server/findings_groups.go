@@ -26,13 +26,14 @@ func findingPaginationParam(raw string, fallback, upperBound int) int {
 }
 
 // findingFilterFromQuery builds the shared findings filter from a request's
-// query string. 列表 / 分组 / 资产树 / 导出走同一份解析,新增筛选项只改这里。
+// query string から共通の findings フィルタを組み立てる。一覧 / グループ / 資産ツリー / エクスポートが
+// 同じ解析を共有し、新しいフィルタ項目はここだけを変更すればよい。
 func findingFilterFromQuery(q url.Values) db.FindingFilter {
 	return db.FindingFilter{
 		Severity:  normFilter(q.Get("severity")),
 		Status:    normFilter(q.Get("status")),
 		VulnClass: normFilter(q.Get("vulnclass")),
-		// task_id(独立于会切到「按任务节点」分支的 task 参数):全局表按任务筛选。
+		// task_id（「タスクノード単位」分岐に切り替わる task パラメータとは独立）：グローバル一覧をタスクで絞り込む。
 		TaskID:     normFilter(q.Get("task_id")),
 		Query:      q.Get("q"),
 		Sort:       q.Get("sort"),
@@ -40,8 +41,8 @@ func findingFilterFromQuery(q url.Values) db.FindingFilter {
 	}
 }
 
-// findingAssetTree serves the「按资产」view's left-hand tree: every asset that
-// carries at least one matching finding, plus the ancestors needed to place it.
+// findingAssetTree は「資産別」ビューの左側ツリーを返す：条件に一致する脆弱性を
+// 1 件以上持つすべての資産と、それを配置するために必要な祖先を含む。
 func (s *Server) findingAssetTree(w http.ResponseWriter, r *http.Request) {
 	tree, err := s.m.pg.BuildFindingAssetTree(findingFilterFromQuery(r.URL.Query()))
 	if err != nil {
@@ -102,7 +103,7 @@ func (s *Server) deepenFinding(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeErr(w, http.StatusRequestEntityTooLarge, "请求正文过大")
+			writeErr(w, http.StatusRequestEntityTooLarge, "リクエスト本文が大きすぎます")
 		} else {
 			writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
 		}
@@ -145,7 +146,7 @@ func (s *Server) deepenFinding(w http.ResponseWriter, r *http.Request) {
 	audit := db.Activity{
 		Worker:  "system",
 		Kind:    "text",
-		Summary: "人工提交漏洞深入利用意图",
+		Summary: "手動で送信した脆弱性の深掘り意図",
 		Detail:  description,
 	}
 	intentID, audit, err := t.Store.AddFindingFollowUpIntent(id, *finding.NodeID, description, audit)

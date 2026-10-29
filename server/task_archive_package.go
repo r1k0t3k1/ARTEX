@@ -503,7 +503,7 @@ func stageTaskArchivePackageDelete(archivePath string, archiveID int64) (string,
 	staged := archivePath + fmt.Sprintf(".deleting-%d", archiveID)
 	if _, err := os.Lstat(staged); err == nil {
 		if _, originalErr := os.Lstat(archivePath); originalErr == nil {
-			return staged, false, errors.New("归档包原文件和删除暂存文件同时存在")
+			return staged, false, errors.New("アーカイブパッケージの元ファイルと削除用の一時ファイルが同時に存在します")
 		} else if !os.IsNotExist(originalErr) {
 			return staged, false, originalErr
 		}
@@ -578,10 +578,12 @@ func writeTaskArchivePackage(path, payloadDir string, snapshot *pgdb.TaskArchive
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			// 归档格式端到端只支持普通文件与目录（解包端对其它类型直接报错），
-			// 无法还原符号链接。跳过而非整包失败：不读取链接目标(lstat，不越出目录树)，
-			// 也不写入 symlink 条目；链接指向树内时目标文件本身仍会被单独遍历归档。
-			log.Printf("[task-archive] 跳过符号链接（归档不支持，不影响其它文件）：%s", current)
+			// アーカイブ形式は端から端まで通常ファイルとディレクトリのみを扱う（展開側は他の
+			// 種類で即エラーになる）ため、シンボリックリンクは復元できない。パッケージ全体を
+			// 失敗させるのではなくスキップする：リンク先を読まず（lstat、ツリー外へ出ない）、
+			// symlink エントリも書き込まない。リンクがツリー内を指す場合、対象ファイル自体は
+			// 別途アーカイブされる。
+			log.Printf("[task-archive] シンボリックリンクをスキップ（アーカイブ非対応、他のファイルには影響なし）：%s", current)
 			return nil
 		}
 		header, err := tar.FileInfoHeader(info, "")

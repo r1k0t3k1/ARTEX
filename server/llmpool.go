@@ -10,11 +10,11 @@ import (
 	"github.com/Autumn-27/norma/llm"
 )
 
-// LLM 轮询(故障转移)的服务端接线。设计见 docs/LLM轮询设计.md：
-//   - 全局激活配置这条路径(agent 未绑定、任务未 pin)才轮询;
-//   - 绑定/pin 的路径默认独占该配置,失败即失败(可由 llm_pool_bind_fallback 打开兜底);
-//   - 链序 = 激活配置 → 其余按 priority DESC,排除 pool_exclude 的;
-//   - 熔断状态进程级共享(s.llmHealth),重建 pool 不清空。
+// LLM ローテーション（フェイルオーバー）のサーバー側配線。設計は docs/LLM轮询设计.md を参照：
+//   - グローバルに有効な設定を使う経路（agent 未バインド、タスク未 pin）でのみローテーションする。
+//   - バインド/pin された経路は既定でその設定を独占し、失敗すれば失敗（llm_pool_bind_fallback でフォールバックを有効化可能）。
+//   - チェーン順 = 有効な設定 → 残りを priority DESC で並べ、pool_exclude のものは除外。
+//   - サーキットブレーカー状態はプロセス全体で共有（s.llmHealth）し、pool の再構築ではクリアしない。
 
 // newLLMHealthRegistry builds the process-wide circuit-breaker registry, mirroring
 // state into PG so a cooling-off window survives a restart. Writes are async and
@@ -31,7 +31,7 @@ func newLLMHealthRegistry(pg *db.DB) *llmpool.Registry {
 		}
 		go func() {
 			if err := pg.SaveLLMHealth(h); err != nil {
-				log.Printf("[llmpool] 熔断状态落库失败: %v", err)
+				log.Printf("[llmpool] サーキットブレーカー状態の永続化に失敗しました: %v", err)
 			}
 		}()
 	}
@@ -48,7 +48,7 @@ func newLLMHealthRegistry(pg *db.DB) *llmpool.Registry {
 				st.OpenUntil = *h.OpenUntil
 			}
 			reg.Restore(h.ProfileID, st)
-			log.Printf("[llmpool] 恢复熔断状态: 配置 #%d 冷却至 %s", h.ProfileID, st.OpenUntil.Format(time.RFC3339))
+			log.Printf("[llmpool] サーキットブレーカー状態を復元: 設定 #%d は %s まで冷却", h.ProfileID, st.OpenUntil.Format(time.RFC3339))
 		}
 	}
 	return reg
@@ -83,7 +83,7 @@ func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Co
 	}
 	profs, err := s.m.pg.PoolProfiles()
 	if err != nil {
-		log.Printf("[llmpool] 读取轮询链失败: %v", err)
+		log.Printf("[llmpool] ローテーション連鎖の読み取りに失敗しました: %v", err)
 		return nil
 	}
 	var head *db.LLMProfile
@@ -136,7 +136,7 @@ func (s *Server) poolForActive(activeID int64, prov llm.Provider, cfg agent.Conf
 	for _, m := range pool.Members() {
 		names = append(names, m.Name+"/"+m.Model)
 	}
-	log.Printf("[llmpool] LLM 轮询已启用，链路(%d): %v", len(names), names)
+	log.Printf("[llmpool] LLM ローテーションが有効です。連鎖(%d): %v", len(names), names)
 	return pool
 }
 

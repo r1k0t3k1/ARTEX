@@ -13,18 +13,20 @@ import (
 	"github.com/Autumn-27/artex/mcphttp"
 )
 
-// 资产同步（ScopeSentry 数据源）。
+// 資産同期（ScopeSentry データソース）。
 //
-// ScopeSentry 是一个 ASM 资产测绘平台，通过其 MCP 接口按【项目】/【任务】两个维度
-// 拉取子域名、Web 应用、服务等资产，映射为 ARTEX 的公司 + 资产模型。数据源本身是
-// 一个名为 "ScopeSentry" 的 http 传输 MCP 行（url + X-API-Key 头保存在 mcp_servers）。
+// ScopeSentry は ASM 資産マッピングプラットフォームで、その MCP インターフェースから
+// 【プロジェクト】/【タスク】の 2 軸でサブドメイン、Web アプリ、サービスなどの資産を
+// 取得し、ARTEX の企業 + 資産モデルへマッピングする。データソース自体は
+// "ScopeSentry" という名前の http トランスポートの MCP 行（url + X-API-Key ヘッダーを
+// mcp_servers に保存）である。
 //
-// 与 agent 工具层不同，这里用 mcphttp.Client.Call 直接调用 MCP 工具、拿原始 JSON，
-// 不触发 AskUser 权限弹窗（后台批量同步）。
+// agent ツール層とは異なり、ここでは mcphttp.Client.Call で MCP ツールを直接呼び、
+// 生の JSON を受け取る。AskUser の権限ダイアログは出さない（バックグラウンドの一括同期）。
 
 const (
 	scopeSentryMCPName = "ScopeSentry"
-	syncMaxPerType     = 5000 // 单目标单类型的入库保护上限
+	syncMaxPerType     = 5000 // 単一ターゲット・単一タイプあたりの取り込み保護上限
 	syncDefaultPage    = 100
 )
 
@@ -50,10 +52,10 @@ func (s *Server) scopeSentryClient(ctx context.Context) (*mcphttp.Client, error)
 		return nil, err
 	}
 	if m == nil {
-		return nil, fmt.Errorf("数据源 %s 不存在，请先创建", scopeSentryMCPName)
+		return nil, fmt.Errorf("データソース %s が存在しません。先に作成してください", scopeSentryMCPName)
 	}
 	if m.URL == "" {
-		return nil, fmt.Errorf("数据源 %s 未配置 URL，请先配置", scopeSentryMCPName)
+		return nil, fmt.Errorf("データソース %s の URL が未設定です。先に設定してください", scopeSentryMCPName)
 	}
 	return mcphttp.New(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure)
 }
@@ -185,7 +187,7 @@ func (s *Server) syncSSProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	text, err := cl.Call(ctx, "list_projects_data", args)
 	if err != nil {
-		writeErr(w, 502, "list_projects_data 失败: "+err.Error())
+		writeErr(w, 502, "list_projects_data に失敗しました: "+err.Error())
 		return
 	}
 	// {result:{All:[{id,name,logo,AssetCount,tag}], <tag>:[...]}, tag:{...}}
@@ -194,7 +196,7 @@ func (s *Server) syncSSProjects(w http.ResponseWriter, r *http.Request) {
 		Tag    map[string]int             `json:"tag"`
 	}
 	if err := json.Unmarshal([]byte(text), &env); err != nil {
-		writeErr(w, 502, "解析项目列表失败: "+err.Error())
+		writeErr(w, 502, "プロジェクト一覧の解析に失敗しました: "+err.Error())
 		return
 	}
 	projects := json.RawMessage("[]")
@@ -228,14 +230,14 @@ func (s *Server) syncSSTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	text, err := cl.Call(ctx, "list_tasks", args)
 	if err != nil {
-		writeErr(w, 502, "list_tasks 失败: "+err.Error())
+		writeErr(w, 502, "list_tasks に失敗しました: "+err.Error())
 		return
 	}
 	var env struct {
 		List json.RawMessage `json:"list"`
 	}
 	if err := json.Unmarshal([]byte(text), &env); err != nil {
-		writeErr(w, 502, "解析任务列表失败: "+err.Error())
+		writeErr(w, 502, "タスク一覧の解析に失敗しました: "+err.Error())
 		return
 	}
 	tasks := env.List
@@ -271,11 +273,11 @@ func (s *Server) syncSSRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Dimension != "project" && req.Dimension != "task" {
-		writeErr(w, 400, "dimension 必须是 project 或 task")
+		writeErr(w, 400, "dimension は project または task である必要があります")
 		return
 	}
 	if len(req.Targets) == 0 {
-		writeErr(w, 400, "targets 不能为空")
+		writeErr(w, 400, "targets を指定してください")
 		return
 	}
 	if len(req.AssetTypes) == 0 {
@@ -308,11 +310,11 @@ func (s *Server) syncSSRun(w http.ResponseWriter, r *http.Request) {
 			if req.CreateCompany {
 				name, roots, perr := s.ssProjectMeta(ctx, cl, target)
 				if perr != nil {
-					warnings = append(warnings, fmt.Sprintf("项目 %s 详情获取失败: %v", target, perr))
+					warnings = append(warnings, fmt.Sprintf("プロジェクト %s の詳細取得に失敗しました: %v", target, perr))
 				} else if name != "" {
 					cid, cerr := cs.UpsertByName(name)
 					if cerr != nil {
-						warnings = append(warnings, fmt.Sprintf("公司 %s 创建失败: %v", name, cerr))
+						warnings = append(warnings, fmt.Sprintf("企業 %s の作成に失敗しました: %v", name, cerr))
 					} else {
 						companies = append(companies, name)
 						madeCompany = true
@@ -329,16 +331,16 @@ func (s *Server) syncSSRun(w http.ResponseWriter, r *http.Request) {
 		for _, at := range req.AssetTypes {
 			ssType, ok := map[string]string{"subdomain": "subdomain", "service": "asset", "app": "app"}[at]
 			if !ok {
-				warnings = append(warnings, "未知资产类型，已跳过: "+at)
+				warnings = append(warnings, "未知の資産タイプのためスキップしました: "+at)
 				continue
 			}
 			items, truncated, ferr := s.ssPageAll(ctx, cl, ssType, filter, pageSize)
 			if ferr != nil {
-				errs = append(errs, fmt.Sprintf("%s(%s) 拉取失败: %v", at, target, ferr))
+				errs = append(errs, fmt.Sprintf("%s(%s) の取得に失敗しました: %v", at, target, ferr))
 				continue
 			}
 			if truncated {
-				warnings = append(warnings, fmt.Sprintf("%s(%s) 达到 %d 条上限，已截断", at, target, syncMaxPerType))
+				warnings = append(warnings, fmt.Sprintf("%s(%s) が上限 %d 件に達したため切り詰めました", at, target, syncMaxPerType))
 			}
 			for _, raw := range items {
 				if e := s.ssIngest(as, at, raw, synced); e != "" {
@@ -431,7 +433,7 @@ func (s *Server) ssIngest(as *db.AssetStore, assetType string, raw json.RawMessa
 			IP    []string `json:"ip"`
 		}
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return "subdomain 解析失败: " + err.Error()
+			return "subdomain の解析に失敗しました: " + err.Error()
 		}
 		if it.Host == "" {
 			return ""
@@ -455,7 +457,7 @@ func (s *Server) ssIngest(as *db.AssetStore, assetType string, raw json.RawMessa
 			ICP         string `json:"icp"`
 		}
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return "app 解析失败: " + err.Error()
+			return "app の解析に失敗しました: " + err.Error()
 		}
 		if it.Name == "" {
 			return ""
@@ -477,7 +479,7 @@ func (s *Server) ssIngest(as *db.AssetStore, assetType string, raw json.RawMessa
 			Icon     string   `json:"icon"`
 		}
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return "service 解析失败: " + err.Error()
+			return "service の解析に失敗しました: " + err.Error()
 		}
 		if it.Service == "http" || it.URL != "" {
 			if it.URL == "" {

@@ -90,8 +90,9 @@ type taskLLMSelection struct {
 	profileID int64
 	revision  int64
 	provider  llm.Provider
-	// retry 是这次选中的配置解析出来的重试参数(profile 覆盖 → 全局策略 → 内置默认)。
-	// 同 provider 安全窗口重试按它走,所以换了 profile 就换一套重试节奏。
+	// retry は今回選んだ設定から解決したリトライパラメータ(profile 上書き → グローバル
+	// ポリシー → 組み込み既定)。同 provider 安全ウィンドウのリトライはこれに従うため、
+	// profile を替えればリトライのリズムも入れ替わる。
 	retry agent.RetryConfig
 }
 
@@ -101,12 +102,14 @@ type taskLLMStreamHooks struct {
 	transition func(taskLLMSelection, db.TaskLLMTransition, error)
 }
 
-// current resolves the provider this role runs on, by precedence:
-// Agent 绑定 → 任务 LLM 配置链 → 全局/环境配置。
-// 绑定优先于任务链：某个角色被显式指定了模型，就一直跑在那个模型上；绑定不存在或
-// 构建失败时才降级到任务链，任务链为空时再降级到全局配置。
-// 返回的 profile id 只有走任务链时才非零 —— streamTaskLLM 以此判断额度错误是否
-// 应该推进任务的故障转移状态（绑定/全局路径不改任务链状态，沿用既有语义）。
+// current はこのロールが使う provider を優先順で解決する：
+// Agent バインド → タスクの LLM 設定チェーン → グローバル/環境設定。
+// バインドはタスクチェーンより優先される：あるロールに明示的にモデルが指定されていれば
+// 常にそのモデルで走り、バインドが存在しないか構築に失敗したときのみタスクチェーンへ
+// 降格し、タスクチェーンが空ならさらにグローバル設定へ降格する。
+// 返る profile id はタスクチェーン経由のときのみ非ゼロ —— streamTaskLLM はこれで
+// クォータエラー時にタスクのフェイルオーバー状態を進めるべきか判断する
+// (バインド/グローバルの経路はタスクチェーン状態を変えず、従来の意味を保つ)。
 func (r *taskLLMRuntime) current() (taskLLMSelection, error) {
 	taskNum, err := parseTaskID(r.taskID)
 	if err != nil {
@@ -184,7 +187,7 @@ func (r *taskLLMRuntime) nonStreaming() bool {
 // maxTokens returns the currently-active source's per-reply output cap.
 // Unresolvable → 0, i.e. send no cap, matching the pre-setting behaviour.
 func (r *taskLLMRuntime) maxTokens() int {
-	cfg, _ := r.activeCfg() // 未解析出配置时是零值 0
+	cfg, _ := r.activeCfg() // 設定を解決できなかった場合はゼロ値 0
 	return cfg.MaxTokens
 }
 
@@ -246,18 +249,19 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 			usage   llm.Usage
 			callErr error
 		)
-		// 同 provider 安全窗口重试:非流式调用要么整体成功、要么整体失败,没有
-		// 中途已交付输出的问题,所以任何瞬时失败都可原样重试。
+		// 同 provider 安全ウィンドウのリトライ：非ストリーミング呼び出しは全体が成功するか
+		// 全体が失敗するかのどちらかで、途中まで出力を渡してしまう問題がないため、あらゆる
+		// 一時的失敗をそのまま再試行できる。
 		retries, backoffOf := sameProviderRetryPolicy(selection.retry)
 		for attempt := 0; ; attempt++ {
 			msg, sr, usage, callErr = selection.provider.Complete(ctx, req)
 			if callErr != nil && ctx.Err() == nil &&
 				attempt < retries && isRetryableStreamError(callErr) {
 				backoff := backoffOf(attempt)
-				log.Printf("[task-llm] task %s 非流式调用失败,%v 后同 provider 重试 (%d/%d): %v",
+				log.Printf("[task-llm] task %s 非ストリーミング呼び出し失敗、%v 後に同 provider で再試行 (%d/%d): %v",
 					taskID, backoff, attempt+1, retries, callErr)
 				if sleepCtx(ctx, backoff) {
-					break // 退避期间 ctx 取消 → 停止重试
+					break // バックオフ中に ctx がキャンセル → 再試行を停止
 				}
 				continue
 			}
@@ -266,7 +270,8 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 		if callErr == nil {
 			return msg, sr, usage, nil
 		}
-		// profileID=0: 显式链已被清空;非额度错误:透传。二者都不改任务 failover 状态。
+		// profileID=0：明示チェーンが空になった。クォータ以外のエラー：そのまま透過。
+		// どちらもタスクの failover 状態は変えない。
 		if selection.profileID == 0 || !isQuotaExhaustedError(callErr) {
 			return llm.Message{}, "", llm.Usage{}, callErr
 		}
@@ -280,7 +285,8 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 		if !transition.Stale && transition.NextProfileID == nil {
 			return llm.Message{}, "", llm.Usage{}, &taskLLMError{taskID: taskID, chainExhausted: transition.ChainExhausted, cause: callErr}
 		}
-		// 没有任何输出交付给调用方,换下一个 profile 重放同一逻辑请求是安全的。
+		// 呼び出し元へ出力を一切渡していないので、次の profile で同じ論理リクエストを
+		// 再生しても安全。
 	}
 }
 
@@ -296,9 +302,10 @@ func streamTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest
 			var pending []llm.StreamEvent
 			var streamErr error
 			retries, backoffOf := sameProviderRetryPolicy(selection.retry)
-			// 同 provider 安全窗口重试:committed 之前(还没向调用方交付任何输出)
-			// 的瞬时失败可以原样重放,不会重复模型输出或工具执行。committed 之后、
-			// ctx 取消、或确定性/额度错误则跳出,交给下方原有的透传/故障转移逻辑。
+			// 同 provider 安全ウィンドウのリトライ：committed より前(まだ呼び出し元へ出力を
+			// 渡していない)の一時的失敗はそのまま再生でき、モデル出力やツール実行が重複しない。
+			// committed 後、ctx キャンセル、または決定論的/クォータエラーなら抜けて、下の
+			// 既存の透過/フェイルオーバー処理へ渡す。
 			for attempt := 0; ; attempt++ {
 				committed = false
 				pending = nil
@@ -328,10 +335,10 @@ func streamTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest
 				if streamErr != nil && !committed && ctx.Err() == nil &&
 					attempt < retries && isRetryableStreamError(streamErr) {
 					backoff := backoffOf(attempt)
-					log.Printf("[task-llm] task %s 提交前流失败,%v 后同 provider 重试 (%d/%d): %v",
+					log.Printf("[task-llm] task %s コミット前のストリーム失敗、%v 後に同 provider で再試行 (%d/%d): %v",
 						taskID, backoff, attempt+1, retries, streamErr)
 					if sleepCtx(ctx, backoff) {
-						break // 退避期间 ctx 取消 → 停止重试
+						break // バックオフ中に ctx がキャンセル → 再試行を停止
 					}
 					continue
 				}
@@ -394,23 +401,25 @@ func streamEventCommitsOutput(event llm.StreamEvent) bool {
 	}
 }
 
-// 提交前安全窗口内、对同一 provider 的【默认】重试次数。SDK 的 doStream 只重试建连
-// 阶段(拿到 200 之前);流一旦开始,中途断流 / overloaded / 流内 429 等瞬时故障会直接
-// 冒泡成 model_error,零重试。只要一个 token 都还没交给调用方(!committed),重放
-// 完全相同的请求就不会重复模型输出或工具副作用,因此这里补一层同 provider 退避重试,
-// 把这类抖动挡在意图整体重跑之前。可被 LLM 配置的重试覆盖/全局重试策略改写。
+// コミット前の安全ウィンドウ内で、同一 provider に対する【既定】の再試行回数。
+// SDK の doStream は接続確立段階(200 を受け取るまで)しか再試行しない。ストリームが
+// 始まると、途中切断 / overloaded / ストリーム内 429 などの一時障害はそのまま
+// model_error として噴き出し、再試行はゼロ。1 トークンたりとも呼び出し元へ渡していなければ
+// (!committed)、まったく同じリクエストの再生でモデル出力やツール副作用が重複しないため、
+// ここで同 provider のバックオフ再試行を一層追加し、こうした揺らぎを意図全体の再実行より
+// 手前で食い止める。LLM 設定のリトライ上書き/グローバルリトライポリシーで書き換え可能。
 const sameProviderStreamRetries = 2
 
-// sameProviderRetryBackoff 是第 attempt 次重试前的【默认】退避(0.5s、1s…,上限 4s),
-// 与 SDK 的指数梯度同风格但封顶更小,避免拖住 worker 的收尾/取消响应。
-// 以变量形式暴露,便于测试将退避置零。
+// sameProviderRetryBackoff は attempt 回目の再試行前の【既定】バックオフ(0.5 秒、1 秒…、
+// 上限 4 秒)。SDK の指数勾配と同系統だが上限を小さくし、worker の締めくくり/キャンセル
+// 応答を引きずらないようにする。変数として公開し、テストでバックオフをゼロにできる。
 var sameProviderRetryBackoff = func(attempt int) time.Duration {
 	return min(500*time.Millisecond*(1<<attempt), 4*time.Second)
 }
 
-// sameProviderRetryPolicy 解析这次调用用哪套同 provider 重试参数:配置里设了次数就
-// 用配置的(负数 = 关掉这层重试),设了间隔就把指数退避换成固定间隔,两者都没设时
-// 与改可配之前逐字节一致。
+// sameProviderRetryPolicy は今回の呼び出しで使う同 provider リトライパラメータを解決する：
+// 設定に回数があればそれを使い(負数 = この層のリトライを無効化)、間隔があれば指数
+// バックオフを固定間隔へ置き換える。どちらも未設定なら可変化前とバイト単位で同一。
 func sameProviderRetryPolicy(r agent.RetryConfig) (retries int, backoff func(int) time.Duration) {
 	retries, backoff = sameProviderStreamRetries, sameProviderRetryBackoff
 	if r.StreamAttempts != 0 {
@@ -423,11 +432,12 @@ func sameProviderRetryPolicy(r agent.RetryConfig) (retries int, backoff func(int
 	return retries, backoff
 }
 
-// isRetryableStreamError 判断「提交前的流失败」是否值得在同一 provider 上重放。
-// 瞬时的传输中断 / 供应商过载 / 限流会自行恢复,可安全重试;而以下三类不重试:
-//   - 额度耗尽:交给 profile 故障转移处理,别在这里白烧重试
-//   - 上下文过长:相同请求重放也没用,交给 harness 的 reactive 压缩兜底
-//   - 4xx 确定性拒绝(400/401/403/404/422):到哪个 provider 都一样会失败
+// isRetryableStreamError は「コミット前のストリーム失敗」を同一 provider で再生する価値が
+// あるか判断する。一時的な転送中断 / ベンダー過負荷 / レート制限は自然回復するため安全に
+// 再試行できる。一方、次の 3 類は再試行しない：
+//   - クォータ枯渇：profile のフェイルオーバーに任せ、ここで無駄に再試行を焼かない
+//   - コンテキスト過長：同じリクエストを再生しても無駄。harness のリアクティブ圧縮に任せる
+//   - 4xx の決定論的拒否(400/401/403/404/422)：どの provider へ行っても同じく失敗する
 func isRetryableStreamError(err error) bool {
 	if err == nil {
 		return false
@@ -446,8 +456,8 @@ func isRetryableStreamError(err error) bool {
 			return false
 		}
 	}
-	// 其余(传输 reset/EOF/timeout、408/429/5xx、流内 error 事件如 anthropic
-	// overloaded_error 等)一律视为瞬时,允许重试。
+	// それ以外(転送 reset/EOF/timeout、408/429/5xx、anthropic の overloaded_error などの
+	// ストリーム内 error イベント)は一律で一時的とみなし、再試行を許可する。
 	return true
 }
 
@@ -564,37 +574,38 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
 	wk.SetFindingRecorder(s.evidenceStore())
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
-	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
-	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
-	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
+	wk.SetNonStreaming(workerRuntime.nonStreaming) // タスクの現在アクティブな profile のストリーミング設定に従う(毎ラウンド読む)
+	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上。出力上限も現在アクティブな profile に追随
+	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 実験機能：noa コンテキスト圧縮(プラットフォーム級スイッチ、run ごとに読む)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
 	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	wk.SetWebSearch(s.webSearchFor("worker"))
-	wk.SetConstraintInject(s.constraintInjectWorker) // 操作约束注入 worker(可配置,默认开)
+	wk.SetConstraintInject(s.constraintInjectWorker) // worker への操作制約注入(設定可能、既定オン)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
-	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
+	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // 実験機能：noa コンテキスト圧縮(プラットフォーム級スイッチ、run ごとに読む)
 	pl.SetKillWork(s.engine.KillWork)
 	pl.SetSteerWork(s.engine.SteerWork)
 	pl.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	pl.SetWebSearch(s.webSearchFor("planner"))
-	pl.SetConstraintInject(s.constraintInjectPlanner) // 操作约束注入 planner(可配置,默认开)
-	// cold-digest §7: 冷节点后台压缩。引擎经权威解析器实际驱动的就是这套 per-task planner
-	// (agentsForTask),Compactor 必须接在这里。走任务路由的 planner provider(§4:与 agent
-	// 同模型,随任务 LLM 链解析),压缩用 Complete 一次性生成 body。
+	pl.SetConstraintInject(s.constraintInjectPlanner) // planner への操作制約注入(設定可能、既定オン)
+	// cold-digest §7：コールドノードのバックグラウンド圧縮。エンジンが権威リゾルバ経由で
+	// 実際に駆動するのはこの per-task planner(agentsForTask)であり、Compactor はここへ
+	// 接続する必要がある。タスクルーティングの planner provider(§4：agent と同モデルで、
+	// タスクの LLM チェーンに従って解決)を使い、圧縮は Complete で本文を一括生成する。
 	pl.SetCompactor(agent.NewCompactor(plannerRuntime, "task-router"))
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
 	main.SetFindingRecorder(s.evidenceStore())
 	main.SetCompactionWindowResolver(mainRuntime.CompactionWindow)
 	main.SetNonStreaming(mainRuntime.nonStreaming)
 	main.SetMaxTokens(mainRuntime.maxTokens)
-	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
+	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // 実験機能：noa コンテキスト圧縮(プラットフォーム級スイッチ、run ごとに読む)
 	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	main.SetWebSearch(s.webSearchFor("mainagent"))
-	main.SetSteerWork(s.engine.SteerWork) // steer_work：人对运行中 work 实时纠偏
+	main.SetSteerWork(s.engine.SteerWork) // steer_work：人間が実行中の work をリアルタイムで軌道修正
 	bundle := &taskAgentBundle{
 		runtime: goalRuntime, plannerRuntime: plannerRuntime, workerRuntime: workerRuntime,
 		mainRuntime: mainRuntime, pl: pl, wk: wk, main: main,
@@ -626,13 +637,13 @@ func (s *Server) emitTaskLLMTransition(t *Task, transition db.TaskLLMTransition,
 	}
 	mode := "automatic"
 	kind := "llm_switch"
-	summary := fmt.Sprintf("%s 额度不足", llmAuditProfileLabel(previous))
+	summary := fmt.Sprintf("%s のクォータ不足", llmAuditProfileLabel(previous))
 	if transition.NextProfileID != nil {
-		summary += fmt.Sprintf("，后续调用切换到 %s", llmAuditProfileLabel(next))
+		summary += fmt.Sprintf("、以降の呼び出しは %s へ切り替え", llmAuditProfileLabel(next))
 	} else {
 		mode = "exhausted"
 		kind = "llm_failover"
-		summary += "，配置链已耗尽"
+		summary += "、設定チェーンを使い切りました"
 	}
 	metadata, _ := json.Marshal(llmActivityMetadata{LLMTransition: llmTransitionAudit{
 		Mode: mode, Reason: cause.Error(), Previous: previous, Next: next,
@@ -647,18 +658,18 @@ func (s *Server) llmAuditProfile(id int64) *llmAuditProfile {
 	}
 	p, err := s.m.pg.ProfileByID(id)
 	if err != nil || p == nil {
-		return &llmAuditProfile{ID: id, Name: fmt.Sprintf("配置 #%d", id)}
+		return &llmAuditProfile{ID: id, Name: fmt.Sprintf("設定 #%d", id)}
 	}
 	return &llmAuditProfile{ID: p.ID, Name: p.Name, Format: p.Format, Model: p.Model}
 }
 
 func llmAuditProfileLabel(profile *llmAuditProfile) string {
 	if profile == nil {
-		return "默认配置"
+		return "既定設定"
 	}
 	name := profile.Name
 	if name == "" {
-		name = fmt.Sprintf("配置 #%d", profile.ID)
+		name = fmt.Sprintf("設定 #%d", profile.ID)
 	}
 	detail := []string{}
 	if profile.Format != "" {
@@ -689,9 +700,9 @@ func (s *Server) emitManualTaskLLMSwitch(t *Task, previousID, nextID *int64) db.
 	if nextID != nil {
 		next = s.llmAuditProfile(*nextID)
 	}
-	summary := fmt.Sprintf("用户手动将任务 LLM 从 %s 切换到 %s", llmAuditProfileLabel(previous), llmAuditProfileLabel(next))
+	summary := fmt.Sprintf("ユーザーがタスクの LLM を手動で %s から %s へ切り替え", llmAuditProfileLabel(previous), llmAuditProfileLabel(next))
 	metadata, _ := json.Marshal(llmActivityMetadata{LLMTransition: llmTransitionAudit{
-		Mode: "manual", Reason: "用户手动切换任务 LLM", Previous: previous, Next: next,
+		Mode: "manual", Reason: "ユーザーによるタスク LLM の手動切り替え", Previous: previous, Next: next,
 	}})
 	return s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "llm_switch", Summary: summary, Detail: summary, Metadata: metadata})
 }

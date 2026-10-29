@@ -93,7 +93,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	ts.SetNotifyFinding(func(int64, string) { notices++ })
 	tools, def, cleanup := agent.AugmentTools(ctx, "planner", ts.PlannerTools())
 	defer cleanup()
-	if !strings.Contains(def.FindingGuidance, "evidence_hint_id") || !strings.Contains(def.FindingGuidance, "取消 Worker") {
+	if !strings.Contains(def.FindingGuidance, "evidence_hint_id") || !strings.Contains(def.FindingGuidance, "ワーカーをキャンセル") {
 		t.Fatal("Planner missed runtime guidance")
 	}
 	report := workflowTool(t, tools, "report_finding")
@@ -131,7 +131,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	}
 	workflowCall(t, ctx, s.toolGetFindingTraffic(), map[string]any{"finding_id": recorded.FindingID}, false)
 	wrong := workflowCall(t, ctx, s.toolGetFindingTraffic(), map[string]any{"finding_id": int64(900000000000000000)}, true)
-	if !strings.Contains(wrong, "独立漏洞记录 ID") {
+	if !strings.Contains(wrong, "独立した脆弱性レコード ID") {
 		t.Fatal("ambiguous ID error", wrong)
 	}
 	input["finding_id"] = recorded.FindingID
@@ -175,7 +175,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.SplitN(offResult, "\n", 2)[1]), &offRecord); err != nil {
 		t.Fatal(err)
 	}
-	if offRecord.FindingID <= 0 || len(offRecord.Traffic.Bindings) != 0 || offRecord.EvidenceStatus != "not_bound" || !strings.Contains(offRecord.EvidenceNote, "已关闭") {
+	if offRecord.FindingID <= 0 || len(offRecord.Traffic.Bindings) != 0 || offRecord.EvidenceStatus != "not_bound" || !strings.Contains(offRecord.EvidenceNote, "クローズ済み") {
 		t.Fatal("disabled binding discarded finding or bound evidence", offResult)
 	}
 	workflowCall(t, ctx, report, map[string]any{"vulnclass": "TCP", "severity": "low", "summary": "no packet needed"}, false)
@@ -246,7 +246,12 @@ func TestFindingWorkflowMigrationPreservesUserConfiguration(t *testing.T) {
 	}
 	search, _ := pg.GetTool("traffic_search")
 	get, _ := pg.GetTool("traffic_get")
-	if !strings.Contains(search.Description, "支持裸主机、主机:端口或完整 URL") {
+	// 既存 DB では v3 マイグレーションのフラグが立ったまま旧中国語の description が残る場合が
+	// ある（SeedTool は初回挿入のみ、マイグレーションも一度きり）。新規 DB の日本語既定と
+	// 旧 DB の中国語（永続化済みの互換リテラル）のどちらでも、host/port の指針があればよい。
+	guideJP := "ベアホスト、ホスト:ポート、完全な URL をサポート"
+	guideLegacy := "支持裸主机、主机:端口或完整 URL"
+	if d := search.Description; !strings.Contains(d, guideJP) && !strings.Contains(d, guideLegacy) {
 		t.Fatal("traffic_search description migration missing host/port guidance")
 	}
 	if search.Enabled || !contains(search.Agents, "reporter") || get.Enabled || len(get.Agents) != 1 || get.Agents[0] != "custom-agent" {
@@ -277,7 +282,7 @@ func TestFindingWorkflowReporterBindsBeforeWritingReport(t *testing.T) {
 	seedServerEvidenceFlow(t, s, "reporter-baseline", []byte("local normal response"))
 	tools, def, cleanup := agent.AugmentTools(ctx, "reporter", nil)
 	defer cleanup()
-	if !strings.Contains(def.FindingGuidance, "报告前自动关联流量") || !strings.Contains(def.FindingGuidance, "绑定成功后重新调用") {
+	if !strings.Contains(def.FindingGuidance, "レポート作成前のトラフィック自動関連付け") || !strings.Contains(def.FindingGuidance, "バインド成功後に再呼び出し") {
 		t.Fatal("reporter did not receive binding workflow")
 	}
 	for _, name := range []string{"traffic_search", "traffic_get", "get_task_worker_trace", "get_task_node_detail", "bind_finding_traffic", "get_finding_traffic", "update_finding_report"} {

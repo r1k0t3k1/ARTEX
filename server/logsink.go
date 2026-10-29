@@ -212,12 +212,14 @@ func parseLog(line string) LogLine {
 
 func levelOf(msg string) string {
 	low := strings.ToLower(msg)
-	for _, k := range []string{"fatal", "panic", "error", "err:", "失败", "丢弃", "拒绝", "✕", "不可达"} {
+	// ログ本文は日本語化済みだが、既存の中国語キーワード（過去に出力された
+	// ログや他パッケージ由来の文字列）も引き続き一致させるため両方を残す。
+	for _, k := range []string{"fatal", "panic", "error", "err:", "失败", "失敗", "丢弃", "破棄", "拒绝", "拒否", "✕", "不可达", "到達不能"} {
 		if strings.Contains(low, k) {
 			return "error"
 		}
 	}
-	for _, k := range []string{"warn", "disabled", "禁用", "skip", "stopped", "⚠", "重试"} {
+	for _, k := range []string{"warn", "disabled", "禁用", "無効", "skip", "stopped", "⚠", "重试", "再試行"} {
 		if strings.Contains(low, k) {
 			return "warn"
 		}

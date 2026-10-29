@@ -29,23 +29,23 @@ import (
 type Task struct {
 	ID           string `json:"id"`
 	ExpID        int64  `json:"exploration_id"`
-	Name         string `json:"name"` // 可选任务名称;空=未命名
+	Name         string `json:"name"` // 任意のタスク名。空=名称未設定
 	CategoryID   *int64 `json:"category_id,omitempty"`
 	CategoryName string `json:"category_name,omitempty"`
 	PinnedAt     int64  `json:"pinned_at,omitempty"`
 	Description  string `json:"description"`
 	Goal         string `json:"goal"`
 	CreatedAt    int64  `json:"created_at"`
-	CompletedAt  int64  `json:"completed_at,omitempty"` // 进入终态的 unix 秒;0=未完成
+	CompletedAt  int64  `json:"completed_at,omitempty"` // 終端状態へ入った unix 秒。0=未完了
 	Paused       bool   `json:"paused"`
-	Queued       bool   `json:"queued"` // 因并发上限被挂起、等待空位自动启动;true=尚未开跑
+	Queued       bool   `json:"queued"` // 同時実行上限により保留され、空き次第自動起動を待っている。true=まだ走っていない
 	// QueuedAt is an internal Unix-nanosecond ordering key. It is deliberately
 	// finer than CreatedAt so several tasks enqueued in the same second retain
 	// their real FIFO order.
 	QueuedAt           int64   `json:"queued_at,omitempty"`
 	QueueMode          string  `json:"queue_mode,omitempty"`
-	ParentRef          string  `json:"parent_ref,omitempty"`     // 父任务 id(编排 spawn 记录)
-	LLMProfileID       *int64  `json:"llm_profile_id,omitempty"` // 指定运行本任务 planner/worker 的 LLM 配置;nil=用全局激活配置
+	ParentRef          string  `json:"parent_ref,omitempty"`     // 親タスク id(オーケストレーションの spawn 記録)
+	LLMProfileID       *int64  `json:"llm_profile_id,omitempty"` // 本タスクの planner/worker を実行する LLM 設定を指定。nil=グローバルのアクティブ設定を使用
 	LLMProfileIDs      []int64 `json:"llm_profile_ids,omitempty"`
 	ActiveLLMProfileID *int64  `json:"active_llm_profile_id,omitempty"`
 	LLMChainRevision   int64   `json:"-"`
@@ -53,11 +53,11 @@ type Task struct {
 	LLMFailoverReason  string  `json:"llm_failover_reason,omitempty"`
 	SourceTaskIDs      []int64 `json:"source_task_ids,omitempty"`
 	CompanyIDs         []int64 `json:"company_ids,omitempty"`
-	Status             string  `json:"status"` // persisted lifecycle status (done/failed/timeout 为终态；空/其它则由运行态推导)
-	// 任务级超时(见 docs/任务级超时与收尾设计.md)。DeadlineAt/FirstRunAt 为 unix 秒,0=未设/未运行。
+	Status             string  `json:"status"` // 永続化されたライフサイクル状態(done/failed/timeout が終端。空/その他は実行状態から導出)
+	// タスク単位タイムアウト(docs/任务级超时与收尾设计.md 参照)。DeadlineAt/FirstRunAt は unix 秒で、0=未設定/未実行。
 	TimeoutSeconds       int                    `json:"timeout_seconds"`
-	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds"` // planner 心跳触发间隔(秒)
-	CoverageEnabled      bool                   `json:"coverage_enabled"`       // 资产覆盖度功能开关(创建时定,默认开)
+	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds"` // planner ハートビートのトリガー間隔(秒)
+	CoverageEnabled      bool                   `json:"coverage_enabled"`       // 資産カバレッジ機能のスイッチ(作成時に確定、既定オン)
 	FirstRunAt           int64                  `json:"first_run_at,omitempty"`
 	DeadlineAt           int64                  `json:"deadline_at,omitempty"`
 	Store                *pgdb.ExplorationStore `json:"-"`
@@ -231,10 +231,12 @@ type Manager struct {
 	mu          sync.RWMutex
 	tasks       map[string]*Task
 	active      string
-	trafficOn   bool // 流量捕获开关（默认关；settings.traffic_capture）
-	llmRecOn    bool // LLM 录制开关（默认关；settings.llm_record）
-	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
-	// webSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关。
+	trafficOn   bool // トラフィックキャプチャのスイッチ(既定オフ。settings.traffic_capture)
+	llmRecOn    bool // LLM 録画のスイッチ(既定オフ。settings.llm_record)
+	// Web 検索のスイッチとソース(既定オフ。settings.web_search_*)。brave-free は braveKey、
+	// tavily は tavilyKey が必要。
+	// webSearchProxy は独立した出口プロキシ(http/https/socks5)で、トラフィック記録用の
+	// MITM プロキシとは無関係。
 	webSearchOn      bool
 	webSearchBackend string
 	braveKey         string
@@ -262,18 +264,22 @@ const (
 	settingGlobalProxy = "global_proxy"
 	settingWorkers     = "workers"
 	settingLLMRecord   = "llm_record"
-	// LLM 轮询(故障转移)。默认关闭——开启后走「全局激活配置」的 agent 在当前配置
-	// 不可用(余额不足/key 失效/限流/服务异常)时自动切到下一个配置。
-	// settingLLMPoolBindFallback 仅在轮询开启时有意义:默认关闭,即 agent/任务显式
-	// 绑定了某个配置就只用它、失败即失败;开启后绑定的配置失败也会回落到轮询链。
+	// LLM ローテーション(フェイルオーバー)。既定オフ——有効にすると「グローバルな
+	// アクティブ設定」を使う agent は、現在の設定が使えないとき(残高不足/key 失効/
+	// レート制限/サービス障害)自動で次の設定へ切り替わる。
+	// settingLLMPoolBindFallback はローテーション有効時のみ意味を持つ：既定オフでは
+	// agent/タスクが明示的にバインドした設定だけを使い、失敗すれば失敗のまま。有効に
+	// するとバインド設定が失敗した場合もローテーション連鎖へフォールバックする。
 	settingLLMPoolOn           = "llm_pool_enabled"
 	settingLLMPoolBindFallback = "llm_pool_bind_fallback"
-	// 任务并发上限:开关 + 上限数。默认关闭;开启后默认上限 5(见 defaultConcurrencyLimit)。
+	// タスク同時実行上限：スイッチ + 上限数。既定オフ。有効化後の既定上限は 5
+	// (defaultConcurrencyLimit 参照)。
 	settingConcurrencyOn    = "task_concurrency_enabled"
 	settingConcurrencyLimit = "task_concurrency_limit"
-	// 实验功能:noa 模型驱动上下文压缩(norma v0.4.0)。默认关闭——开启后平台接入的四类
-	// agent(planner/worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction。
-	// 每 run 读一次,切换只影响之后启动的 run。
+	// 実験機能：noa モデル駆動のコンテキスト圧縮(norma v0.4.0)。既定オフ——有効にすると
+	// プラットフォームの 4 種類の agent(planner/worker/メイン agent/対話)は noa が
+	// コンテキスト圧縮を担い、組み込み compaction に取って代わる。run ごとに一度読み、
+	// 切り替えは以降に起動する run にのみ影響する。
 	settingNoaCompaction = "noa_compaction"
 	// defaultWebSearchBackend is used when web search is on but no backend was picked.
 	defaultWebSearchBackend = "ddgs"
@@ -331,7 +337,7 @@ func (m *Manager) Workers() int {
 // SetWorkers persists the concurrent work-agent count. Values <=0 are rejected.
 func (m *Manager) SetWorkers(n int) error {
 	if n <= 0 {
-		return fmt.Errorf("workers 必须 >0")
+		return fmt.Errorf("workers は 0 より大きい必要があります")
 	}
 	return m.pg.SetSetting(settingWorkers, strconv.Itoa(n))
 }
@@ -358,7 +364,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[pg] 数据库配置来源: %s", source)
+	log.Printf("[pg] データベース設定のソース: %s", source)
 	pg, err := pgdb.Open(dsn)
 	if err != nil {
 		return nil, err
@@ -381,7 +387,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		} else {
 			err = tr.RecoverHostDeleteStages(func(_ int64, taskID int64) (bool, error) {
 				if taskID <= 0 {
-					return false, errors.New("归档流量暂存日志缺少任务 ID")
+					return false, errors.New("アーカイブトラフィックの一時ログにタスク ID がありません")
 				}
 				task, taskErr := pg.GetTask(taskID)
 				if taskErr != nil {
@@ -410,7 +416,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	// Asset auto-completion engine (§5): HTTP probes routed through the recording
 	// proxy (via m.ProxyAddr, which honors the traffic-capture toggle).
 	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
-	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
+	// LLM 録画のスイッチ(既定オフ)。レコーダーは呼び出しのたびにこのフラグを読む。
 	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
 	// Load persisted web-search config (default: off, ddgs).
 	m.webSearchOn = pg.GetBool(settingWebSearchOn, false)
@@ -436,7 +442,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	if m.traffic != nil {
 		if err := m.traffic.SetUpstreamProxy(m.globalProxy); err != nil {
-			log.Printf("[proxy] 全局代理 %q 无效，已忽略: %v", m.globalProxy, err)
+			log.Printf("[proxy] グローバルプロキシ %q は無効のため無視しました: %v", m.globalProxy, err)
 		}
 	}
 	m.enrich = enrich.New(m.assets, m.ProxyAddr, 4)
@@ -472,7 +478,7 @@ func (m *Manager) SetTrafficEnabled(on bool) error {
 }
 
 // LLMRecordEnabled reports whether LLM request/response recording is on
-// (默认关；settings.llm_record). The recorder consults this per call, so the
+// (既定オフ。settings.llm_record)。レコーダーが呼び出しごとに参照するため、
 // toggle takes effect immediately without rebuilding agents.
 func (m *Manager) LLMRecordEnabled() bool {
 	m.mu.RLock()
@@ -493,7 +499,7 @@ func (m *Manager) SetLLMRecordEnabled(on bool) error {
 }
 
 // NoaCompactionEnabled reports whether the experimental noa context-compression
-// mechanism is on (默认关；settings.noa_compaction). Read per agent run via the
+// mechanism is on (既定オフ。settings.noa_compaction)。agent の run ごとに次を介して読む：
 // injected resolver, so a toggle takes effect on the next run without rebuild.
 func (m *Manager) NoaCompactionEnabled() bool {
 	return m.pg.GetBool(settingNoaCompaction, false)
@@ -505,7 +511,7 @@ func (m *Manager) SetNoaCompaction(on bool) error {
 	return m.pg.SetBool(settingNoaCompaction, on)
 }
 
-// LLMPoolEnabled reports whether LLM failover ("轮询") is on (默认关；
+// LLMPoolEnabled は LLM フェイルオーバー(「ローテーション」)が有効か(既定オフ；
 // settings.llm_pool_enabled). Read when the provider chain is built (applyLLM),
 // so a change requires a rebuild — putSettings does that.
 func (m *Manager) LLMPoolEnabled() bool {
@@ -520,8 +526,8 @@ func (m *Manager) LLMPoolEnabled() bool {
 func (m *Manager) SetLLMPoolEnabled(on bool) error { return m.pg.SetBool(settingLLMPoolOn, on) }
 
 // LLMPoolBindFallback reports whether an agent/task that is BOUND to a specific
-// profile still falls back to the chain when that profile fails (默认关：绑定即
-// 独占，失败即失败). Only meaningful while LLMPoolEnabled.
+// profile もその設定が失敗したときにチェーンへフォールバックするか(既定オフ：バインドは
+// 排他で、失敗すれば失敗のまま)。LLMPoolEnabled のときのみ意味を持つ。
 func (m *Manager) LLMPoolBindFallback() bool {
 	if m.pg == nil {
 		return false
@@ -571,7 +577,7 @@ func (m *Manager) WebSearchOpts() agent.WebSearchOpts {
 // profile can actually drive server-side search — DeepSeek exposes it only on
 // the Anthropic-format endpoint — is deliberately NOT validated here: the UI
 // states the requirement and the user decides. A profile that can't serve it
-// simply fails at search time (or at the settings page's 测试 button), which is
+// simply fails at search time (or at the settings page's test button), which is
 // the same feedback every other backend gives for a bad key.
 func (m *Manager) deepSeekSearchCreds() (baseURL, apiKey, model string) {
 	p, err := m.pg.ActiveProfile()
@@ -640,7 +646,7 @@ const browserMCPName = "browser"
 func (m *Manager) syncBrowserMCPProxy() {
 	servers, err := m.pg.ListMCP()
 	if err != nil {
-		log.Printf("[mcp] browser 代理同步: 读取 MCP 列表失败: %v", err)
+		log.Printf("[mcp] browser プロキシ同期: MCP 一覧の読み取りに失敗: %v", err)
 		return
 	}
 	var srv *pgdb.MCPServer
@@ -669,13 +675,13 @@ func (m *Manager) syncBrowserMCPProxy() {
 	srv.Args = encodeJSON(args)
 	srv.Env = encodeJSON(env)
 	if _, err := m.pg.SaveMCP(srv); err != nil {
-		log.Printf("[mcp] browser 代理同步失败: %v", err)
+		log.Printf("[mcp] browser プロキシ同期に失敗: %v", err)
 		return
 	}
 	if proxy != "" {
-		log.Printf("[mcp] browser MCP 已挂捕获代理 %s (CA %s)", proxy, cert)
+		log.Printf("[mcp] browser MCP にキャプチャプロキシ %s を設定(CA %s)", proxy, cert)
 	} else {
-		log.Printf("[mcp] browser MCP 已移除捕获代理配置")
+		log.Printf("[mcp] browser MCP からキャプチャプロキシ設定を削除")
 	}
 }
 
@@ -877,7 +883,7 @@ func (m *Manager) UpdateTaskMetadata(taskID string, patch pgdb.TaskPatch) (*Task
 }
 
 // CreateTask creates a task + its exploration and makes it active.
-// timeoutSeconds is the task-level wall-clock budget (0 = 不限时).
+// timeoutSeconds はタスク単位の実時間予算(0 = 無制限)。
 func (m *Manager) CreateTask(description, goal string, llmProfileID *int64, timeoutSeconds, planHeartbeatSeconds int) (*Task, error) {
 	var ids []int64
 	if llmProfileID != nil {
@@ -1046,7 +1052,7 @@ func (m *Manager) DeleteCompanyWithAssets(id int64, deleteAssets bool) (int64, e
 
 // ReplaceTaskLLMProfiles resets a task's ordered provider chain and mirrors the
 // committed state onto the live task handle. Terminal tasks are editable too —
-// their 主 Agent 对话 keeps running on the chain after the task finishes.
+// their メイン Agent の対話はタスク終了後もこのチェーンで動き続けるため。
 func (m *Manager) ReplaceTaskLLMProfiles(id string, profileIDs []int64, activeProfileID int64) (int64, error) {
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
@@ -1064,10 +1070,11 @@ func (m *Manager) ReplaceTaskLLMProfiles(id string, profileIDs []int64, activePr
 		task.setLLMState(pt.LLMProfileID, pt.ActiveLLMProfileID, pt.LLMProfileIDs, pt.LLMChainRevision, pt.LLMFailoverState, pt.LLMFailoverReason)
 	}
 	m.mu.Unlock()
-	// 终态任务不重开额度阻塞意图:任务已经没有 worker 在跑,重开只会把它们从
-	// blocked 挪到 open——那里既没人执行,也不再满足「重跑意图」的可重跑条件,
-	// 反而变成死状态。终态任务想接着跑,走重跑意图/新增目标,那条路会把任务重新
-	// admit 回运行态。
+	// 終端タスクではブロックされた意図を再オープンしない：もう worker が走っておらず、
+	// 再オープンしても blocked から open へ移すだけで——そこには実行する者もなく、
+	// 「意図の再実行」の再実行可能条件も満たさず、かえって死んだ状態になる。終端タスクを
+	// 続行したい場合は意図の再実行/ゴール追加を使う。その経路ならタスクが再び実行状態へ
+	// 復帰する。
 	if pgdb.IsTerminal(pt.Status) {
 		return 0, nil
 	}
@@ -1341,7 +1348,7 @@ func (m *Manager) TaskStatus(id string) string {
 }
 
 // StampTaskFirstRun stamps first_run_at + deadline_at on the first real run (idempotent
-// in DB) and mirrors deadline_at on the live handle. Returns the deadline unix (0 = 不限).
+// in DB) and mirrors deadline_at on the live handle. Returns the deadline unix (0 = 無制限).
 func (m *Manager) StampTaskFirstRun(id string) (int64, error) {
 	m.taskStateMu.Lock()
 	defer m.taskStateMu.Unlock()
@@ -1728,8 +1735,9 @@ func (m *Manager) List() []*Task {
 	for _, t := range m.tasks {
 		out = append(out, t)
 	}
-	// 置顶任务优先，组内按置顶时间倒序；普通任务按 id 倒序。m.tasks 是 map，
-	// 每次轮询都必须重排，id 则为同刻创建任务提供稳定且唯一的兜底顺序。
+	// ピン留めタスクを優先し、グループ内はピン留め時刻の降順。通常タスクは id の降順。
+	// m.tasks は map なのでポーリングのたびに並べ替える必要があり、id は同時刻に作られた
+	// タスクへ安定かつ一意な最終順序を与える。
 	sort.Slice(out, func(i, j int) bool {
 		iState := out[i].lifecycleSnapshot()
 		jState := out[j].lifecycleSnapshot()
@@ -1779,8 +1787,8 @@ func (t *Task) NotifyFinding(intentID int64, summary string) {
 
 // NotifyGoal records that one OR MORE goals were added in a single set_goals call —
 // by the human via the main agent — then wakes the planner, so the next round spells
-// out "人新增了 N 个目标：…" instead of the planner having to spot new open goals in
-// the overview. One call → one trigger event (set_goals 的一次批量算一条，不逐条刷屏).
+// "人が N 個のゴールを追加しました：…" を伝え、planner が概要から新しい open ゴールを
+// 探し出す必要をなくす。1 回の呼び出し → 1 つのトリガーイベント(set_goals の一括呼び出しを
 // The event survives an early-returning terminal round (drain happens after the gate),
 // so a set_goals that revives a done task still surfaces it once the task is running.
 func (t *Task) NotifyGoal(texts []string) {
@@ -1795,7 +1803,7 @@ func (t *Task) NotifyGoal(texts []string) {
 
 // NotifyHint records that one OR MORE hints were added in a single add_hint call —
 // by the human via the main agent, or by cross-task orchestration — then wakes the
-// planner, so the next round is told "人新增了 N 条战略提示：…" and looks at them
+// planner。次のラウンドで "人が N 件の戦略ヒントを追加しました：…" と伝えられ、
 // directly instead of having to spot the new hint folded into the graph overview.
 // One call → one trigger event (a batched add_hint counts as one, not one per hint).
 func (t *Task) NotifyHint(texts []string) {
@@ -1808,7 +1816,7 @@ func (t *Task) NotifyHint(texts []string) {
 	t.Notify()
 }
 
-// NotifyGoalDeleted records that the human deleted a goal (via 总览的目标管理), then
+// NotifyGoalDeleted は人間がゴールを削除したこと(概要のゴール管理経由)を記録し、
 // wakes the planner so the next round spells out which goal was removed. The event
 // survives an early-returning terminal round (drain happens after the gate).
 func (t *Task) NotifyGoalDeleted(text string) {
@@ -1822,7 +1830,7 @@ func (t *Task) NotifyGoalDeleted(text string) {
 	t.Notify()
 }
 
-// NotifyGoalEdited records that the human edited a goal (via 总览的目标管理), then wakes
+// NotifyGoalEdited は人間がゴールを変更したこと(概要のゴール管理経由)を記録し、
 // the planner so the next round spells out the old→new change. The event survives an
 // early-returning terminal round (drain happens after the gate).
 func (t *Task) NotifyGoalEdited(oldText, newText string) {
@@ -1836,7 +1844,7 @@ func (t *Task) NotifyGoalEdited(oldText, newText string) {
 	t.Notify()
 }
 
-// NotifyCancelled records that the human deleted intentID (reason = 删除原因), then
+// NotifyCancelled は人間が intentID を削除したこと(reason = 削除理由)を記録し、
 // wakes the planner so the next round spells out which intent was removed and why.
 // summary is the intent's text captured before deletion — needed for hard delete,
 // where the node is gone by the time the planner reads the trigger. Applies to both

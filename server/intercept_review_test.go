@@ -17,7 +17,7 @@ type reviewCaptureProvider struct{ request llm.CompletionRequest }
 func (p *reviewCaptureProvider) Stream(_ context.Context, request llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
 	p.request = request
 	return func(yield func(llm.StreamEvent, error) bool) {
-		yield(llm.StreamEvent{Type: llm.SETextDelta, Text: `{"decision":"ask","comment":"实际操作：删除文件；成功后的后果：文件会丢失，归属尚未确认；命中规则：ASK（归属不明）"}`}, nil)
+		yield(llm.StreamEvent{Type: llm.SETextDelta, Text: `{"decision":"ask","comment":"实际操作：ファイルを削除；成功后的后果：ファイルが失われ、帰属は未確認；命中规则：ASK（帰属不明）"}`}, nil)
 	}
 }
 func (p *reviewCaptureProvider) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
@@ -26,7 +26,7 @@ func (p *reviewCaptureProvider) Complete(ctx context.Context, req llm.Completion
 
 // Assert the actual model request, rather than merely the envelope helper.
 func TestReviewCompletionSendsCurrentCallWithoutHistory(t *testing.T) {
-	ctx := intercept.WithReviewContext(t.Context(), "/tmp/review-fixture", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: "清理本次测试文件"})
+	ctx := intercept.WithReviewContext(t.Context(), "/tmp/review-fixture", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: "今回のテストファイルを整理する"})
 	ctx, trace := intercept.WithTrace(ctx, "GLOBAL_OVERVIEW_SENTINEL", []db.InterceptContextEntry{
 		{Kind: "tool_use", Tool: "Write", ToolUseID: "created", Text: `{"path":"probe.txt"}`},
 		{Kind: "tool_result", ToolUseID: "created", Text: "file created"},
@@ -70,7 +70,7 @@ func TestReviewCompletionSendsCurrentCallWithoutHistory(t *testing.T) {
 	if strings.Contains(body, "file created") || strings.Contains(body, `"path"`) {
 		t.Fatal("history leaked into actual model request")
 	}
-	if got.Version != 4 || got.Background == nil || got.Background.Source != intercept.BackgroundUserMessage || got.Background.Text != "清理本次测试文件" || got.WorkingDir != "/tmp/review-fixture" || string(got.Arguments) != string(args) || strings.Contains(body, "worker speculation") || strings.Contains(body, "GLOBAL_OVERVIEW_SENTINEL") {
+	if got.Version != 4 || got.Background == nil || got.Background.Source != intercept.BackgroundUserMessage || got.Background.Text != "今回のテストファイルを整理する" || got.WorkingDir != "/tmp/review-fixture" || string(got.Arguments) != string(args) || strings.Contains(body, "worker speculation") || strings.Contains(body, "GLOBAL_OVERVIEW_SENTINEL") {
 		t.Fatalf("wrong model input: %s", body)
 	}
 }

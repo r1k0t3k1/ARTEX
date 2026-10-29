@@ -12,82 +12,85 @@ import (
 	"github.com/Autumn-27/artex/notify"
 )
 
-// 全局设置键（存在 settings 键值表里，无需建表）。
+// グローバル設定キー（settings のキー・バリュー表に保存する。テーブル追加は不要）。
 const (
-	// settingNotifyEnabled 是推送总开关。默认开：它用于维护期一键止血，
-	// 而不是功能的启用条件——真正的启用条件是「有没有配渠道」。
+	// settingNotifyEnabled は配信の全体スイッチ。既定はオン。これは保守時に一括で止血する
+	// ためのものであって、機能の有効条件ではない——本当の有効条件は「チャネルが設定されているか」。
 	settingNotifyEnabled = "notify_enabled"
-	// settingNotifyPublicBaseURL 是生成漏洞详情回链的外部访问地址
-	// （如 https://artex.example.com）。留空则消息里不带回链按钮。
-	// 项目里没有可复用的外部地址配置，所以这里新增一项。
+	// settingNotifyPublicBaseURL は脆弱性詳細へのバックリンクを生成するための外部公開 URL
+	// （例: https://artex.example.com）。空ならメッセージにバックリンクのボタンを含めない。
+	// プロジェクトに再利用できる外部アドレス設定がないため、ここで新たに追加した。
 	settingNotifyPublicBaseURL = "notify_public_base_url"
-	// settingNotifyDigestMinutes 是汇总模式的周期（分钟）。
+	// settingNotifyDigestMinutes はまとめモードの周期（分）。
 	settingNotifyDigestMinutes = "notify_digest_interval_min"
 )
 
 const (
-	// notifyTick 是投递引擎的轮询间隔。3 秒是该引擎实时性的上限，
-	// 也是「漏洞落库」到「消息到达 IM」之间的主要延迟来源。
+	// notifyTick は配信エンジンのポーリング間隔。3 秒はこのエンジンのリアルタイム性の上限であり、
+	// 「脆弱性が DB に保存される」から「メッセージが IM に届く」までの主要な遅延要因でもある。
 	notifyTick = 3 * time.Second
-	// notifyLease 是领取投递时的租约时长。必须显著大于单次投递的最坏耗时
-	// （notify 包的 HTTP 客户端超时 15 秒），否则会出现同一行被两个
-	// dispatcher 同时投递。
+	// notifyLease は配信を取得するときのリース期間。1 回の配信の最悪所要時間
+	// （notify パッケージの HTTP クライアントのタイムアウト 15 秒）より明確に長い必要がある。
+	// そうでないと同じ行が 2 つの dispatcher に同時に配信されてしまう。
 	notifyLease = 3 * time.Minute
-	// notifyFanOutPerTick 限制每轮分派的事件数，避免首次启用渠道时
-	// 一次性把历史积压全部展开成投递任务。
+	// notifyFanOutPerTick は 1 ラウンドで展開するイベント数を制限し、チャネルを初めて
+	// 有効化したときに過去の滞留分を一気に配信タスクへ展開してしまうのを防ぐ。
 	notifyFanOutPerTick = 200
-	// notifyDefaultDigestMinutes 是汇总周期的默认值。
+	// notifyDefaultDigestMinutes はまとめ周期の既定値。
 	notifyDefaultDigestMinutes = 30
-	// notifyUnlimitedBurstPerTick 是渠道未设限流时的每轮投递上限。
-	// 存在的意义是防止「一个渠道配成不限流 + 一次扫出上千条漏洞」把
-	// 单轮循环拖成长时间阻塞。
+	// notifyUnlimitedBurstPerTick はチャネルにレート制限がない場合の 1 ラウンドあたり配信上限。
+	// 存在意義は「レート制限なしのチャネル + 1 回のスキャンで数千件の脆弱性」という状況が
+	// 1 ラウンドのループを長時間ブロックするのを防ぐこと。
 	notifyUnlimitedBurstPerTick = 50
-	// notifyMaxSendsPerChannelPerTick 是单渠道每轮最多投递几条。
+	// notifyMaxSendsPerChannelPerTick は 1 チャネルあたり 1 ラウンドで最大何件配信するか。
 	//
-	// 这个上限由**租约时长**倒推：领取时给行打的是租约（notifyLease = 3 分钟），
-	// 若一轮里串行投递的条数多到最坏耗时超过租约，后几条还没发完租约就过期了。
-	// 单进程内无所谓（Run 是单个 goroutine 串行跑，tick 不会重入），但**两个
-	// 进程连同一个库**时，对端会把租约过期的行重新领走并重复发送，还会把
-	// attempts 双份递增、在原进程仍在投递时就判成失败。
+	// この上限は**リース期間**から逆算したもの。取得時にその行へ付けるのはリース
+	// （notifyLease = 3 分）であり、1 ラウンドで直列配信する件数が多すぎて最悪所要時間が
+	// リースを超えると、後ろの数件は送り終わる前にリースが切れる。単一プロセスなら問題ない
+	// （Run は単一 goroutine で直列に走り、tick は再入しない）が、**2 つのプロセスが同じ
+	// DB に繋ぐ**場合、対向プロセスがリース切れの行を再取得して二重送信し、さらに
+	// attempts を二重にインクリメントして、元のプロセスがまだ配信中なのに失敗と判定してしまう。
 	//
-	// 取值：3 分钟租约 / 30 秒单次超时 = 6 是**刚好用满租约**、零余量，
-	// 不能取；取 5 让最坏耗时 150 秒留出 30 秒余量。这个关系由
-	// TestNotifyTickBudgetFitsWithinLease 钉死——改 notifyLease、
-	// notifySendTimeout 或本值中的任意一个都会让那条断言失败。
+	// 値：3 分リース / 30 秒単発タイムアウト = 6 は**リースをちょうど使い切る**ゼロ余裕なので
+	// 採用できない。5 を取って最悪所要時間 150 秒に 30 秒の余裕を残す。この関係は
+	// TestNotifyTickBudgetFitsWithinLease で固定されている——notifyLease、
+	// notifySendTimeout、この値のどれを変えてもあのアサーションが失敗する。
 	notifyMaxSendsPerChannelPerTick = 5
-	// notifySendTimeout 是单次投递的超时。它同时决定上一条常量的取值，
-	// 两者相乘不能超过 notifyLease，见 TestNotifyTickBudgetFitsWithinLease。
+	// notifySendTimeout は 1 回の配信のタイムアウト。前の定数の値も同時に決めており、
+	// 両者の積は notifyLease を超えてはならない。TestNotifyTickBudgetFitsWithinLease を参照。
 	notifySendTimeout = 30 * time.Second
 )
 
-// notifyBackoff 是失败重试的退避序列，下标为已尝试次数。
-// 3 次机会（含首次）与 db.MaxNotifyAttempts 对应，两者必须一起改。
+// notifyBackoff は失敗時のリトライのバックオフ系列で、添字は試行済み回数。
+// 3 回のチャンス（初回を含む）は db.MaxNotifyAttempts に対応し、両者は必ず一緒に変更する。
 var notifyBackoff = []time.Duration{
 	time.Second,
 	5 * time.Second,
 	30 * time.Second,
 }
 
-// Notifier 是漏洞推送的投递引擎。
+// Notifier は脆弱性通知の配信エンジン。
 //
-// 与 Scheduler 并列，作为独立 goroutine 运行（见 server.New）。刻意不复用
-// Scheduler 的 tick：推送的实时性要求（3 秒）与触发器的业务节奏不同，
-// 且两者的失败互不牵连——推送卡住不该影响 agent 触发。
+// Scheduler と並び、独立した goroutine として動作する（server.New を参照）。Scheduler の
+// tick を意図的に再利用していないのは、通知のリアルタイム性の要求（3 秒）がトリガーの
+// 業務リズムと異なるうえ、両者の失敗が互いに巻き込まれないようにするため——通知が
+// 詰まっても agent のトリガーに影響を与えてはならない。
 type Notifier struct {
 	s  *Server
 	pg *db.DB
 
-	// mu 保护 buckets。渠道数量少、竞争低，一把互斥锁足够，
-	// 不值得为它引入更细粒度的结构。
+	// mu は buckets を保護する。チャネル数が少なく競合も低いので、1 本のミューテックスで
+	// 十分であり、これのために細粒度の構造を持ち込む価値はない。
 	mu      sync.Mutex
 	buckets map[int64]*notifyBucket
 }
 
-// notifyBucket 是单渠道的令牌桶。
+// notifyBucket はチャネル単位のトークンバケット。
 //
-// 用令牌桶而不是「每分钟计数后清零」的滑动窗口，是因为后者的边界效应很糟：
-// 在窗口末尾发满 20 条、下一瞬间再发 20 条，对平台来说是一秒内 40 条，
-// 会被限流；令牌桶以恒定速率补充，天然避免这种突发。
+// 「毎分カウントしてからクリアする」スライディングウィンドウではなくトークンバケットを
+// 使うのは、前者の境界効果がひどいため。ウィンドウ末尾で 20 件送り、その直後にさらに
+// 20 件送ると、プラットフォームから見れば 1 秒間に 40 件でレート制限に掛かる。
+// トークンバケットは一定速率で補充されるので、この種のバーストを自然に避けられる。
 type notifyBucket struct {
 	tokens   float64
 	lastFill time.Time
@@ -97,7 +100,7 @@ func newNotifier(s *Server) *Notifier {
 	return &Notifier{s: s, pg: s.m.pg, buckets: map[int64]*notifyBucket{}}
 }
 
-// Run 循环直到 ctx 结束。由 server.New 启动一次。
+// Run は ctx が終わるまでループする。server.New が 1 回起動する。
 func (n *Notifier) Run(ctx context.Context) {
 	if n.pg == nil {
 		return
@@ -114,21 +117,21 @@ func (n *Notifier) Run(ctx context.Context) {
 	}
 }
 
-// step 跑一轮：先分派新事件，再投递到期的任务。
+// step は 1 ラウンドを実行する：まず新規イベントを展開し、次に期限の来たタスクを配信する。
 //
-// 任何一步失败都只记日志、不中断循环——通知系统的故障绝不能升级成进程级问题。
-// 每个 tick 都是独立的，下一轮会自然重试。
+// どの段階が失敗してもログを残してループを止めない——通知システムの障害がプロセス全体の
+// 問題に格上げされてはならない。各 tick は独立しており、次のラウンドが自然に再試行する。
 func (n *Notifier) step(ctx context.Context) {
 	if !n.enabled() {
 		return
 	}
 	if _, _, err := n.pg.FanOutPendingEvents(ctx, notifyFanOutPerTick); err != nil {
-		log.Printf("[notify] 分派事件失败: %v", err)
+		log.Printf("[notify] イベントの展開に失敗: %v", err)
 		return
 	}
 	channels, err := n.pg.ListNotificationChannels(ctx)
 	if err != nil {
-		log.Printf("[notify] 读取渠道失败: %v", err)
+		log.Printf("[notify] チャネルの読み込みに失敗: %v", err)
 		return
 	}
 	baseURL := n.publicBaseURL()
@@ -136,12 +139,12 @@ func (n *Notifier) step(ctx context.Context) {
 		if !ch.IsEnabled() {
 			continue
 		}
-		// 令牌桶的计量单位是**消息条数**（等价于 HTTP 请求数），不是漏洞条数。
-		// 实时模式下两者相同（一条漏洞一条消息）；汇总模式下一整批漏洞合成
-		// 一条消息，所以只消耗一个令牌。
+		// トークンバケットの計量単位は**メッセージ件数**（= HTTP リクエスト数）であり、
+		// 脆弱性の件数ではない。リアルタイムモードでは両者は同じ（脆弱性 1 件 = メッセージ 1 件）だが、
+		// まとめモードではまとまった脆弱性 1 バッチがメッセージ 1 件になるので、トークンは 1 つだけ消費する。
 		//
-		// 两种模式都先问令牌桶、再按额度去领——顺序不能反，否则被限流挡下的
-		// 投递已经消耗过重试次数。
+		// どちらのモードでも、まずトークンバケットに問い合わせてから枠の分だけ取得する——順序を
+		// 逆にしてはいけない。そうしないとレート制限で弾かれた配信がすでにリトライ回数を消費してしまう。
 		now := time.Now()
 		if ch.Mode == db.NotifyModeDigest {
 			tokens, claimLimit := digestTickPlan()
@@ -159,32 +162,35 @@ func (n *Notifier) step(ctx context.Context) {
 	}
 }
 
-// digestTickPlan 返回汇总渠道本轮的令牌消耗与批次大小上界。
+// digestTickPlan はまとめチャネルの今ラウンドのトークン消費量とバッチサイズの上限を返す。
 //
-// 两个返回值是**两个不同的量纲**，这正是独立成函数的理由：
+// 2 つの戻り値は**次元の異なる量**であり、それこそが独立した関数にしている理由:
 //
-//   - tokens 是消息条数。一批漏洞合成一条消息、发一次 HTTP 请求，所以恒为 1。
-//     rate_per_min 因此仍然对 digest 生效（每分钟最多这么多条汇总消息）。
-//   - claimLimit 是这一批最多装几条漏洞。它只受内存上界约束，与请求预算无关。
+//   - tokens はメッセージ件数。脆弱性のバッチがメッセージ 1 件、HTTP リクエスト 1 回に
+//     まとまるので常に 1。したがって rate_per_min は digest にも効く（毎分これだけの
+//     まとめメッセージまで）。
+//   - claimLimit はこのバッチに最大何件の脆弱性を詰めるか。これはメモリ上の上限にのみ
+//     縛られ、リクエスト予算とは無関係。
 //
-// 曾经为了让 rate_per_min 对 digest 生效，把每轮请求预算
-// （notifyMaxSendsPerChannelPerTick，由租约倒推而来）直接当批次大小传下去。
-// 后果是 rate_per_min=20 的渠道在 3 秒的 tick 里只补到 1 个令牌，于是每条汇总
-// 消息只装 1 个漏洞——digest 退化成「带汇总文案的实时推送」，读者收到的是一串
-// 「近 30 分钟新增 1 个漏洞」，而 db.MaxDigestBatchSize 永不可达。
+// かつて rate_per_min を digest にも効かせようとして、ラウンドごとのリクエスト予算
+// （notifyMaxSendsPerChannelPerTick、リースから逆算したもの）をそのままバッチサイズとして
+// 渡していた。結果、rate_per_min=20 のチャネルは 3 秒の tick でトークンが 1 つしか補充されず、
+// まとめメッセージ 1 件に脆弱性が 1 件しか入らない——digest が「まとめ文付きのリアルタイム
+// 通知」に退化し、読者が受け取るのは「直近 30 分で 1 件追加」という連続になり、
+// db.MaxDigestBatchSize には永遠に到達しなかった。
 //
-// 这个症状在端到端测试里不容易发现（现有用例都手动传一个够大的 limit 给
-// stepDigest，绕过了 step 里的额度计算），所以把决策收在这里由
-// TestDigestTickPlanDecouplesBatchSizeFromSendBudget 直接钉住。
+// この症状はエンドツーエンドテストでは見つけにくい（既存のケースはどれも十分大きい limit を
+// 手動で stepDigest に渡し、step 内の枠計算を迂回していた）。そこで判断をここに集約し、
+// TestDigestTickPlanDecouplesBatchSizeFromSendBudget で直接固定している。
 func digestTickPlan() (tokens, claimLimit int) {
 	return 1, db.MaxDigestBatchSize
 }
 
-// stepRealtime 领取并投递某渠道的实时任务，一条漏洞一条消息。
+// stepRealtime はあるチャネルのリアルタイムタスクを取得して配信する。脆弱性 1 件につきメッセージ 1 件。
 func (n *Notifier) stepRealtime(ctx context.Context, ch *db.NotificationChannel, allow int, baseURL string) {
 	deliveries, err := n.pg.ClaimRealtimeDeliveries(ctx, ch.ID, allow, notifyLease)
 	if err != nil {
-		log.Printf("[notify] 领取实时投递失败 channel=%d: %v", ch.ID, err)
+		log.Printf("[notify] リアルタイム配信の取得に失敗 channel=%d: %v", ch.ID, err)
 		return
 	}
 	if len(deliveries) == 0 {
@@ -192,13 +198,13 @@ func (n *Notifier) stepRealtime(ctx context.Context, ch *db.NotificationChannel,
 	}
 	channel, cfg, ok := n.adapt(ch)
 	if !ok {
-		_ = n.pg.FailDeliveries(ctx, deliveryIDs(deliveries), fmt.Sprintf("渠道类型 %q 未注册", ch.Kind))
+		_ = n.pg.FailDeliveries(ctx, deliveryIDs(deliveries), fmt.Sprintf("チャネル種別 %q は未登録", ch.Kind))
 		return
 	}
 	for _, dl := range deliveries {
 		msg, err := n.renderSingle(ctx, dl, baseURL)
 		if err != nil {
-			// 渲染失败是本地数据问题，重试不会变好。
+			// レンダリング失敗はローカルデータの問題であり、リトライしても直らない。
 			_ = n.pg.FailDeliveries(ctx, []int64{dl.ID}, err.Error())
 			continue
 		}
@@ -206,12 +212,12 @@ func (n *Notifier) stepRealtime(ctx context.Context, ch *db.NotificationChannel,
 	}
 }
 
-// stepDigest 在批次到期时把某渠道的待发投递聚合成一条消息发出。
+// stepDigest はバッチの期限が来たとき、あるチャネルの未送信の配信をまとめメッセージ 1 件にして送る。
 func (n *Notifier) stepDigest(ctx context.Context, ch *db.NotificationChannel, allow int, baseURL string) {
 	window := n.digestInterval()
 	due, err := n.pg.DigestBatchDue(ctx, ch.ID, window)
 	if err != nil {
-		log.Printf("[notify] 判断汇总批次失败 channel=%d: %v", ch.ID, err)
+		log.Printf("[notify] まとめバッチの期限判定に失敗 channel=%d: %v", ch.ID, err)
 		return
 	}
 	if !due {
@@ -219,7 +225,7 @@ func (n *Notifier) stepDigest(ctx context.Context, ch *db.NotificationChannel, a
 	}
 	deliveries, err := n.pg.ClaimDigestBatch(ctx, ch.ID, allow, notifyLease)
 	if err != nil {
-		log.Printf("[notify] 领取汇总批次失败 channel=%d: %v", ch.ID, err)
+		log.Printf("[notify] まとめバッチの取得に失敗 channel=%d: %v", ch.ID, err)
 		return
 	}
 	if len(deliveries) == 0 {
@@ -227,7 +233,7 @@ func (n *Notifier) stepDigest(ctx context.Context, ch *db.NotificationChannel, a
 	}
 	channel, cfg, ok := n.adapt(ch)
 	if !ok {
-		_ = n.pg.FailDeliveries(ctx, deliveryIDs(deliveries), fmt.Sprintf("渠道类型 %q 未注册", ch.Kind))
+		_ = n.pg.FailDeliveries(ctx, deliveryIDs(deliveries), fmt.Sprintf("チャネル種別 %q は未登録", ch.Kind))
 		return
 	}
 	msg, included, err := n.renderBatch(ctx, deliveries, baseURL, int(window.Minutes()))
@@ -235,69 +241,73 @@ func (n *Notifier) stepDigest(ctx context.Context, ch *db.NotificationChannel, a
 		_ = n.pg.FailDeliveries(ctx, deliveryIDs(deliveries), err.Error())
 		return
 	}
-	// 快照坏掉、没能进消息的那些投递要显式判失败。不这么做的话它们会留在
-	// included 之外、既不进消息也不进失败列表——发送成功时它们的状态会被
-	// 之后的批量标记漏掉，永远停在 sending 直到租约过期被反复领取。
+	// スナップショットが壊れてメッセージに入れられなかった配信は、明示的に失敗と判定する。
+	// そうしないと included の外に取り残され、メッセージにも失敗リストにも入らない——送信
+	// 成功時には後続の一括マークから漏れ、ずっと sending のままリースが切れるたびに
+	// 繰り返し取得され続ける。
 	if skipped := excludeDeliveries(deliveries, included); len(skipped) > 0 {
-		reason := "事件快照无法解析，本条漏洞无法渲染成消息"
+		reason := "イベントのスナップショットを解析できず、この脆弱性をメッセージにレンダリングできない"
 		if fErr := n.pg.FailDeliveries(ctx, deliveryIDs(skipped), reason); fErr != nil {
-			log.Printf("[notify] 标记坏快照投递失败 channel=%s ids=%v: %v", ch.Kind, deliveryIDs(skipped), fErr)
+			log.Printf("[notify] 壊れたスナップショットの配信を失敗として記録できず channel=%s ids=%v: %v", ch.Kind, deliveryIDs(skipped), fErr)
 		}
-		log.Printf("[notify] 跳过 %d 条快照无法解析的投递 channel=%d", len(skipped), ch.ID)
+		log.Printf("[notify] スナップショットを解析できず %d 件の配信をスキップ channel=%d", len(skipped), ch.ID)
 	}
-	// 只把进了消息的那些交给 send：included[i] 与 msg.Items[i] 严格对应，
-	// send 依赖这个对应关系把「渠道回报装下了前 K 条」落到正确的投递行上。
+	// メッセージに入ったものだけを send に渡す。included[i] と msg.Items[i] は厳密に対応しており、
+	// send はこの対応関係に依存して「チャネルが前 K 件まで収めた」という報告を正しい配信行に反映する。
 	n.send(ctx, channel, cfg, msg, included)
 }
 
-// send 投递并按结果流转状态。
+// send は配信し、結果に応じて状態を遷移させる。
 //
-// 同一批投递（汇总模式下可能几十条）共享一个发送结果：要么送达、要么整批重试。
-// 不做逐条重试——汇总消息是一条，重发其中一部分会让批次语义错乱。
+// 同じバッチ（まとめモードでは数十件になることもある）は 1 つの送信結果を共有する。届くか、
+// バッチ全体が再試行か。1 件ずつ再試行はしない——まとめメッセージは 1 通であり、一部だけ
+// 再送するとバッチの意味が崩れる。
 //
-// 唯一的例外是**渠道长度上限导致的分段**：渠道回报实际只装下了前 K 条，
-// 那么第 K+1 条起必须留到下一批，而不是跟着一起被标记成功。否则被截掉的
-// 那些漏洞既不在消息里、也不在失败列表里，彻底消失。
+// 唯一の例外は**チャネルの長さ上限による分割**：チャネルが実際には前 K 件しか収めなかったと
+// 報告したなら、K+1 件目以降は一緒に成功扱いにするのではなく次のバッチへ回さなければならない。
+// そうしないと切り捨てられた脆弱性はメッセージにも失敗リストにもなく、完全に消えてしまう。
 func (n *Notifier) send(ctx context.Context, channel notify.Channel, cfg map[string]any, msg notify.Message, deliveries []*db.NotificationDelivery) {
-	// 单次投递设上限，避免某个渠道卡住把这一轮剩余渠道全部拖住。
+	// 1 回の配信に上限を設け、あるチャネルが詰まってこのラウンドの残り全チャネルを
+	// 引きずり込むのを防ぐ。
 	sendCtx, cancel := context.WithTimeout(ctx, notifySendTimeout)
 	defer cancel()
 	delivered, err := channel.Send(sendCtx, cfg, msg)
 	if err == nil && delivered > 0 {
 		if delivered > len(deliveries) {
-			// 渠道回报的条数不可能超过投递数；真发生了说明渲染层算错了，
-			// 按全部送达处理并把问题记下来，总好过把记录写乱。
-			log.Printf("[notify] 渠道回报送达条数 %d 超过投递数 %d channel=%s，按全部送达处理",
+			// チャネルが報告する件数が配信数を超えるはずはない。本当に起きたならレンダリング層の
+			// 計算違いなので、全件配信として処理しつつ問題を記録する。レコードを壊すよりましである。
+			log.Printf("[notify] チャネルの配信報告件数 %d が配信数 %d を超過 channel=%s、全件配信として処理",
 				delivered, len(deliveries), channel.Kind())
 			delivered = len(deliveries)
 		}
 		sent, rest := deliveries[:delivered], deliveries[delivered:]
 		if err := n.pg.MarkDeliveriesSent(ctx, deliveryIDs(sent)); err != nil {
-			log.Printf("[notify] 标记已送达失败 channel=%s ids=%v: %v", channel.Kind(), deliveryIDs(sent), err)
+			log.Printf("[notify] 配信済みの記録に失敗 channel=%s ids=%v: %v", channel.Kind(), deliveryIDs(sent), err)
 		}
 		if len(rest) > 0 {
-			// 本条消息已达渠道长度上限：剩下的立刻回队，由下一个 tick 续发。
-			// 用 DeferDeliveries 而非 RescheduleDeliveries —— 这不是失败，
-			// 不该消耗重试预算（领取时已经乐观 +1 了，那里会减回去）。
+			// このメッセージがチャネルの長さ上限に達した：残りは即座に列へ戻し、次の tick で続けて送る。
+			// RescheduleDeliveries ではなく DeferDeliveries を使う——これは失敗ではなく、
+			// リトライ予算を消費すべきでない（取得時に楽観的に +1 しているので、そこで減らされる）。
 			if err := n.pg.DeferDeliveries(ctx, deliveryIDs(rest),
-				fmt.Sprintf("本条消息已达渠道长度上限，仅送达前 %d 条，其余留待下一批", delivered)); err != nil {
-				log.Printf("[notify] 分段续发排队失败 channel=%s ids=%v: %v", channel.Kind(), deliveryIDs(rest), err)
+				fmt.Sprintf("このメッセージがチャネルの長さ上限に達し、先頭 %d 件のみ配信、残りは次のバッチへ", delivered)); err != nil {
+				log.Printf("[notify] 分割分の再キューに失敗 channel=%s ids=%v: %v", channel.Kind(), deliveryIDs(rest), err)
 			}
 		}
 		return
 	}
 	if err == nil {
-		// 渠道既没报错也没说送达了多少条。按失败处理（走退避），
-		// 免得这条投递被反复领取却永远标记不掉。
-		err = fmt.Errorf("渠道未报告送达条数（delivered=%d）", delivered)
+		// チャネルはエラーも報告せず、何件届いたとも言わなかった。失敗として扱い（バックオフへ）、
+		// この配信が取得され続けたまま永遠にマークされない事態を避ける。
+		err = fmt.Errorf("チャネルが配信件数を報告しなかった（delivered=%d）", delivered)
 	}
 
-	// 失败处置**逐条**决定，而不是拿整批的最大尝试次数做判断。
+	// 失敗の扱いは**1 件ずつ**決める。バッチ全体の最大試行回数で判断してはならない。
 	//
-	// 曾经是 `if maxAttempts(deliveries) >= MaxNotifyAttempts` 整批判死，但批次里
-	// 各条的尝试次数并不相同：一个已经重试两次的老投递（attempts=2）会把同一批里
-	// 全新的投递（attempts=1）一起拖进 failed——新漏洞一条重试都没用上就永久丢了，
-	// 与「不让老行拖新行下水」的初衷正好相反。
+	// かつては `if maxAttempts(deliveries) >= MaxNotifyAttempts` でバッチ全体を失敗確定していたが、
+	// バッチ内の各件の試行回数は同じではない：すでに 2 回リトライした古い配信（attempts=2）が、
+	// 同じバッチ内の真新しい配信（attempts=1）を一緒に failed へ引きずり込んでしまう——
+	// 新しい脆弱性は 1 回もリトライされずに永久に失われ、「古い行が新しい行を道連れにしない」
+	// という当初の意図とは正反対だった。
 	permanent := notify.IsPermanent(err)
 	var failIDs, exhaustedIDs []int64
 	byDelay := map[time.Duration][]int64{}
@@ -315,30 +325,32 @@ func (n *Notifier) send(ctx context.Context, channel notify.Channel, cfg map[str
 
 	if len(failIDs) > 0 {
 		if fErr := n.pg.FailDeliveries(ctx, failIDs, err.Error()); fErr != nil {
-			log.Printf("[notify] 标记失败状态出错 channel=%s ids=%v: %v", channel.Kind(), failIDs, fErr)
+			log.Printf("[notify] 失敗状態の記録でエラー channel=%s ids=%v: %v", channel.Kind(), failIDs, fErr)
 		}
 	}
 	if len(exhaustedIDs) > 0 {
-		reason := fmt.Sprintf("重试 %d 次后仍失败: %s", db.MaxNotifyAttempts, err)
+		reason := fmt.Sprintf("%d 回リトライしても失敗: %s", db.MaxNotifyAttempts, err)
 		if fErr := n.pg.FailDeliveries(ctx, exhaustedIDs, reason); fErr != nil {
-			log.Printf("[notify] 标记失败状态出错 channel=%s ids=%v: %v", channel.Kind(), exhaustedIDs, fErr)
+			log.Printf("[notify] 失敗状態の記録でエラー channel=%s ids=%v: %v", channel.Kind(), exhaustedIDs, fErr)
 		}
 	}
-	// 按延迟分组重排：只有 3 档退避，分组数天然很小，不必为每条单独发一次
-	// UPDATE（那会让一个 500 条的批次产生 500 次往返）。
+	// 遅延ごとにグループ化して再スケジュールする。バックオフは 3 段階しかないので、
+	// グループ数は自然に少なく、1 件ずつ UPDATE を発行する必要はない（500 件のバッチで
+	// 500 回の往復が発生してしまう）。
 	for delay, group := range byDelay {
 		if rErr := n.pg.RescheduleDeliveries(ctx, group, delay, err.Error()); rErr != nil {
-			log.Printf("[notify] 重排投递失败 channel=%s ids=%v: %v", channel.Kind(), group, rErr)
+			log.Printf("[notify] 配信の再スケジュールに失敗 channel=%s ids=%v: %v", channel.Kind(), group, rErr)
 		}
 	}
 	if len(failIDs)+len(exhaustedIDs) > 0 {
-		log.Printf("[notify] 投递失败 channel=%d kind=%s 永久失败=%d 重试耗尽=%d 待重试=%d: %s",
+		log.Printf("[notify] 配信失敗 channel=%d kind=%s 永久失敗=%d リトライ枯渇=%d 再試行待ち=%d: %s",
 			deliveries[0].ChannelID, channel.Kind(), len(failIDs), len(exhaustedIDs), len(byDelay), err)
 	}
 }
 
-// excludeDeliveries 返回 all 中不在 keep 里的那些（按指针身份比较）。
-// 用于找出「没能进消息」的投递——它们必须被显式处置，不能留在灰色地带。
+// excludeDeliveries は all のうち keep にないものを返す（ポインタ同一性で比較）。
+// 「メッセージに入れられなかった」配信を見つけるために使い、それらは必ず明示的に
+// 処理しなければならない——グレーゾーンに残してはならない。
 func excludeDeliveries(all, keep []*db.NotificationDelivery) []*db.NotificationDelivery {
 	inKeep := make(map[*db.NotificationDelivery]bool, len(keep))
 	for _, dl := range keep {
@@ -353,8 +365,8 @@ func excludeDeliveries(all, keep []*db.NotificationDelivery) []*db.NotificationD
 	return out
 }
 
-// adapt 取渠道实现并解析其配置。
-// 返回 ok=false 表示类型未注册，投递应直接判失败而不是无限重试。
+// adapt はチャネル実装を取得し、その設定を解析する。
+// ok=false は種別が未登録であることを示し、配信は無限リトライではなく即座に失敗と判定すべき。
 func (n *Notifier) adapt(ch *db.NotificationChannel) (notify.Channel, map[string]any, bool) {
 	channel, ok := notify.Get(ch.Kind)
 	if !ok {
@@ -362,8 +374,8 @@ func (n *Notifier) adapt(ch *db.NotificationChannel) (notify.Channel, map[string
 	}
 	var cfg map[string]any
 	if len(ch.Config) > 0 {
-		// 配置解析失败时给一个空 map：渠道自身的 Validate 会报出「缺哪个字段」，
-		// 那个错误比 JSON 解析错误更能指导用户修复。
+		// 設定の解析に失敗したら空の map を渡す。チャネル自身の Validate が「どのフィールドが
+		// 欠けているか」を報告してくれ、そのエラーは JSON 解析エラーよりユーザーの修復に役立つ。
 		_ = json.Unmarshal(ch.Config, &cfg)
 	}
 	if cfg == nil {
@@ -372,7 +384,7 @@ func (n *Notifier) adapt(ch *db.NotificationChannel) (notify.Channel, map[string
 	return channel, cfg, true
 }
 
-// renderSingle 渲染单条漏洞消息。
+// renderSingle は脆弱性 1 件のメッセージをレンダリングする。
 func (n *Notifier) renderSingle(ctx context.Context, dl *db.NotificationDelivery, baseURL string) (notify.Message, error) {
 	snap, err := parseSnapshot(dl)
 	if err != nil {
@@ -385,23 +397,23 @@ func (n *Notifier) renderSingle(ctx context.Context, dl *db.NotificationDelivery
 	return notify.Message{Items: []notify.Item{item}, HomeURL: baseURL}, nil
 }
 
-// renderBatch 渲染汇总消息。逐条解析快照——单条坏了只跳过那一条，
-// 不让它把整批汇总拖没。
+// renderBatch はまとめメッセージをレンダリングする。スナップショットは 1 件ずつ解析し、
+// 1 件壊れていたらその 1 件だけをスキップして、まとめ全体を失わせない。
 //
-// 返回值 included 与 msg.Items **严格一一对应**（第 i 个投递 ↔ 第 i 个条目）。
-// 这个对应关系是硬要求：调用方按「渠道回报装下了前 K 条」来决定前 K 个投递
-// 标记已送达。若这里跳过了坏快照却不把跳过的投递从 included 里剔除，
-// 下标就会错位——本该失败的坏条目会被标成已送达，而好条目被误判为未送达。
-// 坏掉的那些由调用方显式标记失败，见 stepDigest。
+// 戻り値の included は msg.Items と**厳密に 1 対 1 で対応する**（i 番目の配信 ↔ i 番目の項目）。
+// この対応関係は必須条件である：呼び出し元は「チャネルが前 K 件まで収めた」という報告に基づいて
+// 先頭 K 件の配信を配信済みにする。ここで壊れたスナップショットをスキップしながら、スキップした
+// 配信を included から取り除かないと、添字がずれて——本来失敗すべき壊れた項目が配信済みに、
+// 正常な項目が未配信と誤判定される。壊れたものは呼び出し元が明示的に失敗と記録する。stepDigest を参照。
 func (n *Notifier) renderBatch(ctx context.Context, deliveries []*db.NotificationDelivery, baseURL string, windowMinutes int) (notify.Message, []*db.NotificationDelivery, error) {
 	items := make([]notify.Item, 0, len(deliveries))
 	included := make([]*db.NotificationDelivery, 0, len(deliveries))
 	for _, dl := range deliveries {
 		snap, err := parseSnapshot(dl)
 		if err != nil {
-			// 坏快照不进消息，也不进 included——它的处置由调用方负责
-			// （显式标记失败，而不是混在「已送达」里蒙混过关）。
-			log.Printf("[notify] 汇总批次中跳过无法解析的快照 delivery=%d: %v", dl.ID, err)
+			// 壊れたスナップショットはメッセージにも included にも入れない——その処理は呼び出し元が
+			// 担う（「配信済み」に紛れ込ませず、明示的に失敗と記録する）。
+			log.Printf("[notify] まとめバッチで解析できないスナップショットをスキップ delivery=%d: %v", dl.ID, err)
 			continue
 		}
 		item, err := n.itemFor(ctx, snap, baseURL)
@@ -412,7 +424,7 @@ func (n *Notifier) renderBatch(ctx context.Context, deliveries []*db.Notificatio
 		included = append(included, dl)
 	}
 	if len(items) == 0 {
-		return notify.Message{}, nil, fmt.Errorf("汇总批次 %d 条投递全部无法解析", len(deliveries))
+		return notify.Message{}, nil, fmt.Errorf("まとめバッチの配信 %d 件がすべて解析不能", len(deliveries))
 	}
 	return notify.Message{
 		Items:         items,
@@ -422,13 +434,14 @@ func (n *Notifier) renderBatch(ctx context.Context, deliveries []*db.Notificatio
 	}, included, nil
 }
 
-// itemFor 把事件快照渲染成待推送条目，顺带解析资产名与详情回链。
+// itemFor はイベントのスナップショットを通知項目にレンダリングし、併せて資産名と詳細への
+// バックリンクを解決する。
 func (n *Notifier) itemFor(ctx context.Context, snap notify.Snapshot, baseURL string) (notify.Item, error) {
 	assets, err := n.pg.NotificationAssetNames(ctx, snap.AssetIDs)
 	if err != nil {
-		// 资产名解析失败不该阻止推送：读不到名字比收不到通知轻得多，
-		// 消息里少一行资产而已。
-		log.Printf("[notify] 解析资产名失败 finding=%d: %v", snap.FindingID, err)
+		// 資産名の解決失敗で通知を止めるべきではない。名前が読めないことは通知が届かないより
+		// はるかに軽く、メッセージから資産の行が 1 行減るだけである。
+		log.Printf("[notify] 資産名の解決に失敗 finding=%d: %v", snap.FindingID, err)
 	}
 	item := notify.Item{
 		FindingID:  snap.FindingID,
@@ -441,24 +454,27 @@ func (n *Notifier) itemFor(ctx context.Context, snap notify.Snapshot, baseURL st
 		ToStatus:   snap.ToStatus,
 	}
 	if baseURL != "" {
-		// 详情页路由见 web/src/app/(main)/function/findings/detail/page.tsx，
-		// 它从 query 参数 id 读取漏洞 id。
+		// 詳細ページのルートは web/src/app/(main)/function/findings/detail/page.tsx を参照。
+		// そちらはクエリパラメータ id から脆弱性の id を読む。
 		item.DetailURL = fmt.Sprintf("%s/function/findings/detail?id=%d", baseURL, snap.FindingID)
 	}
 	return item, nil
 }
 
-// takeTokens 从渠道令牌桶里取走**最多 want 个**令牌，返回实际取到的数量。
+// takeTokens はチャネルのトークンバケットから**最大 want 個**のトークンを取り、実際に
+// 取れた数を返す。
 //
-// 一个令牌 = 一条消息（一次 HTTP 请求）。实时模式下调用方要几条就传几条；
-// 汇总模式下一整批漏洞只发一条消息，传 1。
+// トークン 1 個 = メッセージ 1 件（HTTP リクエスト 1 回）。リアルタイムモードでは呼び出し元が
+// 必要な件数をそのまま渡し、まとめモードではまとまった脆弱性 1 バッチがメッセージ 1 件なので 1 を渡す。
 //
-// 桶容量为该渠道每分钟上限，按恒定速率补充。ratePerMin<=0 表示不限流，
-// 返回一个有限但足够大的值，防止单轮循环被无限积压拖住。
+// バケット容量はそのチャネルの 1 分あたり上限で、一定速率で補充される。ratePerMin<=0 は
+// レート制限なしを意味し、有限だが十分大きい値を返して、1 ラウンドのループが無限の滞留に
+// 引きずられないようにする。
 //
-// want 这个上限是必需的：没有它就只能把桶整个抽空，而调用方自己还有每轮上限，
-// 多取的令牌既用不上、又在下次补充前凭空消失——攒下来的突发容量永远不可达，
-// 连「这一轮没有任何待发投递」都会照扣一笔。
+// want という上限は必須である：これがないとバケットを丸ごと空にするしかなく、しかも呼び出し元
+// 自身にもラウンド上限があるため、余分に取ったトークンは使われないまま次の補充までに消える——
+// 貯めておいたバースト容量には永遠に到達できず、「このラウンドに配信待ちが 1 件もない」場合でも
+// 律儀に差し引かれてしまう。
 func (n *Notifier) takeTokens(channelID int64, ratePerMin, want int, now time.Time) int {
 	if want <= 0 {
 		return 0
@@ -473,14 +489,15 @@ func (n *Notifier) takeTokens(channelID int64, ratePerMin, want int, now time.Ti
 		b = &notifyBucket{tokens: float64(ratePerMin), lastFill: now}
 		n.buckets[channelID] = b
 	}
-	// 按经过的真实时间补充，速率是 ratePerMin/60 每秒。
+	// 経過した実時間で補充する。速率は ratePerMin/60 毎秒。
 	if elapsed := now.Sub(b.lastFill).Seconds(); elapsed > 0 {
 		b.tokens = minF(float64(ratePerMin), b.tokens+elapsed*float64(ratePerMin)/60)
 		b.lastFill = now
 	}
-	// 加一个极小 epsilon 再取整：令牌数是浮点累加出来的，分两次补满时
-	// 0.5 + 0.5 可能得到 0.9999999999，直接 int() 会被截成 0——
-	// 数学上已满的桶却取不出令牌。1e-9 远小于一个令牌，不会放过真正的欠额。
+	// ごく小さなイプシロンを足してから整数化する：トークン数は浮動小数点の累積なので、
+	// 2 回に分けて満杯になる場合、0.5 + 0.5 が 0.9999999999 になり得る。そのまま int() すると
+	// 0 に切り捨てられ、数学的には満杯のバケットからトークンが取れなくなる。1e-9 は 1 トークンより
+	// はるかに小さく、本当の不足を誤って通すことはない。
 	take := min(int(b.tokens+1e-9), want)
 	if take <= 0 {
 		return 0
@@ -489,12 +506,12 @@ func (n *Notifier) takeTokens(channelID int64, ratePerMin, want int, now time.Ti
 	return take
 }
 
-// enabled 读取总开关。
+// enabled は全体スイッチを読み取る。
 func (n *Notifier) enabled() bool {
 	return n.pg.GetBool(settingNotifyEnabled, true)
 }
 
-// publicBaseURL 返回回链用的外部地址，去掉尾部斜杠。
+// publicBaseURL はバックリンク用の外部アドレスを、末尾のスラッシュを除いて返す。
 func (n *Notifier) publicBaseURL() string {
 	v, ok, err := n.pg.GetSetting(settingNotifyPublicBaseURL)
 	if err != nil || !ok {
@@ -503,7 +520,7 @@ func (n *Notifier) publicBaseURL() string {
 	return trimTrailingSlash(v)
 }
 
-// digestInterval 返回汇总周期，非法或未配置时回落到默认值。
+// digestInterval はまとめ周期を返し、不正または未設定なら既定値にフォールバックする。
 func (n *Notifier) digestInterval() time.Duration {
 	v, ok, err := n.pg.GetSetting(settingNotifyDigestMinutes)
 	if err != nil || !ok {
@@ -516,17 +533,18 @@ func (n *Notifier) digestInterval() time.Duration {
 	return time.Duration(m) * time.Minute
 }
 
-// parseSnapshot 解析投递对应事件的快照。
+// parseSnapshot は配信に対応するイベントのスナップショットを解析する。
 func parseSnapshot(dl *db.NotificationDelivery) (notify.Snapshot, error) {
 	var snap notify.Snapshot
 	if len(dl.Snapshot) == 0 {
-		return snap, fmt.Errorf("投递 %d 的事件快照为空", dl.ID)
+		return snap, fmt.Errorf("配信 %d のイベントスナップショットが空", dl.ID)
 	}
 	if err := json.Unmarshal(dl.Snapshot, &snap); err != nil {
-		return snap, fmt.Errorf("解析投递 %d 的事件快照失败: %w", dl.ID, err)
+		return snap, fmt.Errorf("配信 %d のイベントスナップショットの解析に失敗: %w", dl.ID, err)
 	}
 	if snap.Kind == "" {
-		// 事件类型以事件行为准，快照里那份可能由旧版本写过。
+		// イベント種別はイベント行のものを正とする。スナップショット内のものは旧バージョンが
+		// 書いた可能性がある。
 		snap.Kind = dl.EventKind
 	}
 	return snap, nil

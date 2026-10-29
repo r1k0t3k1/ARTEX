@@ -22,25 +22,27 @@ const (
 	jwtTTL         = 7 * 24 * time.Hour
 	keyChars       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-	// 下限与 setup 页的前端校验一致——校验只放在前端等于没放，直接打 API 就能
-	// 绕过。上限是 bcrypt 的硬限制：超过 72 字节 GenerateFromPassword 会返回
-	// ErrPasswordTooLong，提前挡掉好过让用户收到一句含义不明的「密码加密失败」。
+	// 下限は setup ページのフロントエンド検証と一致させる——検証をフロントだけに置いても
+	// 意味がない。API を直接叩けば迂回できてしまう。上限は bcrypt のハードリミットで、
+	// 72 バイトを超えると GenerateFromPassword が ErrPasswordTooLong を返す。
+	// 前もって弾いたほうが、意味不明な「パスワードの暗号化に失敗しました」を返すより良い。
 	minPasswordRunes = 8
 	maxPasswordBytes = 72
 )
 
-// errDataSourceUnavailable 是密码相关读操作失败时统一的回复。这些 handler 绝不能
-// 把"读不到"当成"没有设置"：authInit 曾因此在数据库报错时放行，让未认证请求覆盖
-// 掉已有的管理员密码。
-const errDataSourceUnavailable = "数据源暂时不可用，请稍后重试"
+// errDataSourceUnavailable はパスワード関連の読み取り操作が失敗したときの共通応答。
+// これらの handler は絶対に「読めない」を「未設定」と解釈してはならない。
+// authInit はかつてこれが原因で DB エラー時に処理を通してしまい、未認証のリクエストが
+// 既存の管理者パスワードを上書きできてしまった。
+const errDataSourceUnavailable = "データソースが一時的に利用できません。しばらくしてから再試行してください"
 
-// validatePassword 返回空串表示通过，否则返回可直接展示给用户的中文原因。
+// validatePassword は空文字列なら合格、そうでなければユーザーにそのまま表示できる理由を返す。
 func validatePassword(pw string) string {
 	if utf8.RuneCountInString(pw) < minPasswordRunes {
-		return fmt.Sprintf("密码长度至少 %d 位", minPasswordRunes)
+		return fmt.Sprintf("パスワードは %d 文字以上にしてください", minPasswordRunes)
 	}
 	if len(pw) > maxPasswordBytes {
-		return fmt.Sprintf("密码长度不能超过 %d 字节", maxPasswordBytes)
+		return fmt.Sprintf("パスワードは %d バイト以下にしてください", maxPasswordBytes)
 	}
 	return ""
 }
@@ -60,7 +62,7 @@ func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
 			if data, rerr := os.ReadFile(legacy); rerr == nil {
 				if werr := os.WriteFile(path, data, 0o600); werr == nil {
 					_ = os.Remove(legacy)
-					log.Printf("[auth] JWT key 已从 %s 迁移到 %s（移出可浏览工作区）", legacy, path)
+					log.Printf("[auth] JWT key を %s から %s へ移行しました（閲覧可能な作業ディレクトリ外へ）", legacy, path)
 				}
 			}
 		}
@@ -79,7 +81,7 @@ func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
 	if err := os.WriteFile(path, buf, 0600); err != nil {
 		return nil, fmt.Errorf("write jwt key: %w", err)
 	}
-	log.Printf("[auth] 新 JWT key 已写入 %s", path)
+	log.Printf("[auth] 新しい JWT key を %s に書き込みました", path)
 	return buf, nil
 }
 
@@ -126,11 +128,11 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 		}
 		tok := extractToken(r)
 		if tok == "" {
-			writeErr(w, 401, "未授权")
+			writeErr(w, 401, "認証されていません")
 			return
 		}
 		if !verifyJWT(tok, s.jwtKey) {
-			writeErr(w, 401, "token 无效或已过期")
+			writeErr(w, 401, "トークンが無効か、有効期限が切れています")
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -138,9 +140,10 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 }
 
 // GET /api/auth/status — reports whether the admin password has been initialised.
-// 读失败必须回 503 而不是 initialized:false：前端在 initialized:false 时会把用户
-// 送到 /setup 去设置密码（login/page.tsx），把数据库故障包装成 200 等于把用户往
-// 覆盖已有密码的路上推。
+// 読み取り失敗時は initialized:false ではなく 503 を返さなければならない。
+// フロントエンドは initialized:false を見るとユーザーを /setup へ送ってパスワードを
+// 設定させようとする（login/page.tsx）。DB 障害を 200 で包むのは、既存パスワードの
+// 上書きへユーザーを誘導するのと同じだ。
 func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
@@ -166,14 +169,14 @@ func (s *Server) authInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing != "" {
-		writeErr(w, 403, "密码已设置")
+		writeErr(w, 403, "パスワードは設定済みです")
 		return
 	}
 	var req struct {
 		Password string `json:"password"`
 	}
 	if err := decode(r, &req); err != nil || req.Password == "" {
-		writeErr(w, 400, "密码不能为空")
+		writeErr(w, 400, "パスワードを入力してください")
 		return
 	}
 	if msg := validatePassword(req.Password); msg != "" {
@@ -182,24 +185,25 @@ func (s *Server) authInit(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		writeErr(w, 500, "密码加密失败")
+		writeErr(w, 500, "パスワードの暗号化に失敗しました")
 		return
 	}
-	// 用 INSERT ... ON CONFLICT DO NOTHING 而不是 upsert：上面那次 GetSetting 只是
-	// 快速失败路径，真正"仅首次可设"的保证落在主键约束上。bcrypt 要跑几十毫秒，
-	// 这期间别的请求完全可能先把密码设好，而读检查本身也可能因故障而失效。
+	// upsert ではなく INSERT ... ON CONFLICT DO NOTHING を使う。直前の GetSetting は
+	// あくまで早期失敗のための経路で、「初回のみ設定可能」という保証は主キー制約が担う。
+	// bcrypt には数十ミリ秒かかり、その間に別のリクエストが先にパスワードを設定し得るし、
+	// 読み取りチェック自体も障害で機能しなくなる可能性がある。
 	inserted, err := pg.InsertSettingIfAbsent(authPassKey, string(hash))
 	if err != nil {
-		writeErr(w, 500, "保存失败: "+err.Error())
+		writeErr(w, 500, "保存に失敗しました: "+err.Error())
 		return
 	}
 	if !inserted {
-		writeErr(w, 403, "密码已设置")
+		writeErr(w, 403, "パスワードは設定済みです")
 		return
 	}
 	tok, err := signJWT(s.jwtKey)
 	if err != nil {
-		writeErr(w, 500, "token 生成失败")
+		writeErr(w, 500, "トークンの生成に失敗しました")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"token": tok})
@@ -214,7 +218,7 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verifyJWT(extractToken(r), s.jwtKey) {
-		writeErr(w, 401, "未授权")
+		writeErr(w, 401, "認証されていません")
 		return
 	}
 	var req struct {
@@ -222,11 +226,11 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"new_password"`
 	}
 	if err := decode(r, &req); err != nil {
-		writeErr(w, 400, "请求格式错误")
+		writeErr(w, 400, "リクエストの形式が不正です")
 		return
 	}
 	if req.NewPassword == "" {
-		writeErr(w, 400, "新密码不能为空")
+		writeErr(w, 400, "新しいパスワードを入力してください")
 		return
 	}
 	if msg := validatePassword(req.NewPassword); msg != "" {
@@ -239,20 +243,20 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok || hash == "" {
-		writeErr(w, 403, "密码未初始化，请先设置密码")
+		writeErr(w, 403, "パスワードが未初期化です。先にパスワードを設定してください")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.OldPassword)); err != nil {
-		writeErr(w, 401, "当前密码错误")
+		writeErr(w, 401, "現在のパスワードが違います")
 		return
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		writeErr(w, 500, "密码加密失败")
+		writeErr(w, 500, "パスワードの暗号化に失敗しました")
 		return
 	}
 	if err := pg.SetSetting(authPassKey, string(newHash)); err != nil {
-		writeErr(w, 500, "保存失败: "+err.Error())
+		writeErr(w, 500, "保存に失敗しました: "+err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -269,11 +273,11 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decode(r, &req); err != nil {
-		writeErr(w, 400, "请求格式错误")
+		writeErr(w, 400, "リクエストの形式が不正です")
 		return
 	}
 	if req.Username != "ARTEX" {
-		writeErr(w, 401, "用户名或密码错误")
+		writeErr(w, 401, "ユーザー名またはパスワードが違います")
 		return
 	}
 	hash, ok, err := pg.GetSetting(authPassKey)
@@ -282,16 +286,16 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok || hash == "" {
-		writeErr(w, 403, "密码未初始化，请先设置密码")
+		writeErr(w, 403, "パスワードが未初期化です。先にパスワードを設定してください")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
-		writeErr(w, 401, "用户名或密码错误")
+		writeErr(w, 401, "ユーザー名またはパスワードが違います")
 		return
 	}
 	tok, err := signJWT(s.jwtKey)
 	if err != nil {
-		writeErr(w, 500, "token 生成失败")
+		writeErr(w, 500, "トークンの生成に失敗しました")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"token": tok})

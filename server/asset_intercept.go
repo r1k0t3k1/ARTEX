@@ -136,21 +136,21 @@ type assetInterceptRuleReq struct {
 func validateAssetInterceptRuleReq(req *assetInterceptRuleReq) error {
 	req.Pattern = strings.TrimSpace(req.Pattern)
 	if req.Pattern == "" {
-		return fmt.Errorf("pattern 不能为空")
+		return fmt.Errorf("pattern を入力してください")
 	}
 	switch req.Kind {
 	case "exact_domain", "exact_url", "fuzzy_domain", "fuzzy_ip", "fuzzy_url":
 		// free-form, no format check
 	case "exact_ip":
 		if net.ParseIP(req.Pattern) == nil {
-			return fmt.Errorf("exact_ip 不是有效 IP 地址：%s", req.Pattern)
+			return fmt.Errorf("exact_ip が有効な IP アドレスではありません：%s", req.Pattern)
 		}
 	case "cidr":
 		if _, _, err := net.ParseCIDR(req.Pattern); err != nil {
-			return fmt.Errorf("cidr 不是有效网段（形如 192.168.0.0/16）：%s", req.Pattern)
+			return fmt.Errorf("cidr が有効なネットワーク範囲ではありません（192.168.0.0/16 の形式）：%s", req.Pattern)
 		}
 	default:
-		return fmt.Errorf("kind 无效：%s", req.Kind)
+		return fmt.Errorf("kind が無効です：%s", req.Kind)
 	}
 	return nil
 }

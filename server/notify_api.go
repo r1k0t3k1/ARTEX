@@ -12,14 +12,14 @@ import (
 	"github.com/Autumn-27/artex/notify"
 )
 
-// 本文件是推送功能的 HTTP 接口。全部路由挂在 requireAuth 之后（见 Handler()），
-// 与其它管理接口一致。
+// このファイルは通知機能の HTTP API。すべてのルートは requireAuth の後ろにぶら下がる
+// （Handler() を参照）で、他の管理 API と同じ扱い。
 
-// notifyChannelDTO 是渠道的对外表述。
+// notifyChannelDTO はチャネルの対外的な表現。
 //
-// Config 是**掩码后**的配置：凭据字段被替换成 notify.MaskedPrefix 开头的值。
-// 前端把掩码值原样提交回来即表示「这个字段没改」，服务端据此保留库中原值
-// （见 notify.MergeConfig）。
+// Config は**マスク済み**の設定で、認証情報のフィールドは notify.MaskedPrefix で始まる値に
+// 置き換えられている。フロントがマスク値をそのまま送り返せば「このフィールドは変更なし」を
+// 意味し、サーバーはそれに従って DB の元の値を保持する（notify.MergeConfig を参照）。
 type notifyChannelDTO struct {
 	ID         int64          `json:"id"`
 	Name       string         `json:"name"`
@@ -31,12 +31,13 @@ type notifyChannelDTO struct {
 	RatePerMin int            `json:"rate_per_min"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
-	// SecretKeys 告知前端哪些字段是凭据，据此渲染密码框与「留空即不改」的提示。
-	// 由渠道自己声明（notify.Channel.SecretKeys），前端不硬编码渠道知识。
+	// SecretKeys はどのフィールドが認証情報かをフロントに伝え、それに基づいてパスワード欄と
+	// 「空欄なら変更なし」のヒントを描画させる。チャネル自身が宣言する（notify.Channel.SecretKeys）
+	// ので、フロントはチャネル固有の知識をハードコードしない。
 	SecretKeys []string `json:"secret_keys"`
 }
 
-// notifyDeliveryDTO 是投递历史的对外表述。
+// notifyDeliveryDTO は配信履歴の対外的な表現。
 type notifyDeliveryDTO struct {
 	ID          int64      `json:"id"`
 	FindingID   int64      `json:"finding_id,string"`
@@ -51,7 +52,7 @@ type notifyDeliveryDTO struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	SentAt      *time.Time `json:"sent_at,omitempty"`
 	NextAttempt time.Time  `json:"next_attempt_at"`
-	// 消息标题摘要，让历史列表不必展开就能看出这条推的是什么。
+	// メッセージのタイトル要約。履歴一覧を開かなくても何が通知されたか分かるようにする。
 	Title    string `json:"title"`
 	Severity string `json:"severity"`
 }
@@ -109,8 +110,8 @@ func toNotifyDeliveryDTO(dl *db.NotificationDelivery) notifyDeliveryDTO {
 	return dto
 }
 
-// notifyMeta 返回通知页需要的静态元数据与全局设置，一次请求拿全，
-// 避免前端为了渲染一个下拉框发三次请求。
+// notifyMeta は通知ページが必要とする静的メタデータとグローバル設定を 1 回のリクエストで
+// まとめて返し、フロントがドロップダウン 1 つ描くのに 3 回リクエストするのを避ける。
 func (s *Server) notifyMeta(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
@@ -161,10 +162,10 @@ func (s *Server) notifyListChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"channels": out})
 }
 
-// notifyChannelRequest 是新建/更新渠道的请求体。
+// notifyChannelRequest はチャネルの新規作成/更新のリクエストボディ。
 //
-// 全部业务字段用指针，以便区分「没传」与「传了零值」：PATCH 语义下，
-// 没传的字段必须保留库中原值。
+// 業務フィールドはすべてポインタにして「未送信」と「ゼロ値を送信」を区別できるようにする。
+// PATCH の意味では、送られていないフィールドは DB の元の値を保持しなければならない。
 type notifyChannelRequest struct {
 	Name       *string        `json:"name"`
 	Kind       *string        `json:"kind"`
@@ -182,11 +183,11 @@ func (s *Server) notifyCreateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	var req notifyChannelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "请求体不是合法 JSON: "+err.Error())
+		writeErr(w, 400, "リクエストボディが正しい JSON ではありません: "+err.Error())
 		return
 	}
 	if req.Kind == nil || !notify.ValidKind(*req.Kind) {
-		writeErr(w, 400, fmt.Sprintf("渠道类型无效，可选：%s", strings.Join(notify.Kinds(), " / ")))
+		writeErr(w, 400, fmt.Sprintf("チャネル種別が不正です。指定可能: %s", strings.Join(notify.Kinds(), " / ")))
 		return
 	}
 	name := ""
@@ -194,7 +195,7 @@ func (s *Server) notifyCreateChannel(w http.ResponseWriter, r *http.Request) {
 		name = strings.TrimSpace(*req.Name)
 	}
 	if name == "" {
-		writeErr(w, 400, "缺少渠道名称")
+		writeErr(w, 400, "チャネル名がありません")
 		return
 	}
 	channel, _ := notify.Get(*req.Kind)
@@ -211,28 +212,30 @@ func (s *Server) notifyCreateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Mode != nil {
 		if !db.ValidNotifyMode(*req.Mode) {
-			writeErr(w, 400, "推送模式无效，可选：realtime / digest")
+			writeErr(w, 400, "通知モードが不正です。指定可能: realtime / digest")
 			return
 		}
 		ch.Mode = *req.Mode
 	}
 	if req.RatePerMin != nil {
-		// 显式给值就照用——包括 0，它表示「不限流」，是合法配置。
+		// 明示的に指定されたらそのまま使う——0 も含む。0 は「レート制限なし」を意味する正しい設定。
 		if *req.RatePerMin < 0 {
-			writeErr(w, 400, "限流值不能为负")
+			writeErr(w, 400, "レート制限値は負にできません")
 			return
 		}
 		ch.RatePerMin = *req.RatePerMin
 	}
-	// 只有「字段缺省」才套用渠道默认值。默认值必须在这里决定而不是在 db 层：
-	// 只有请求体能区分「没传这个字段」与「显式传了 0」，而两者的含义完全不同
-	// （前者=用默认，后者=不限流）。db 层把 0 也当未指定，会让不限流配置不可达。
+	// チャネルの既定値を適用するのは「フィールドが省略された」場合だけ。既定値をここで決める
+	// 必要があるのは db 層ではなく、リクエストボディだけが「このフィールドを送っていない」と
+	// 「明示的に 0 を送った」を区別できるからであり、両者の意味はまったく異なる（前者=既定を使う、
+	// 後者=レート制限なし）。db 層が 0 も未指定扱いにすると、レート制限なしの設定に到達できなくなる。
 	if req.RatePerMin == nil {
 		ch.RatePerMin = channel.DefaultRatePerMin()
 	}
 	if req.Filter != nil {
-		// 写入时校验取值受限的过滤字段（如 min_severity）。详见 notify.Filter.Validate：
-		// 门槛打错字会让过滤器静默失效变成全推，必须在入口拦掉。
+		// 書き込み時に、値が制限されたフィルタフィールド（min_severity など）を検証する。
+		// 詳細は notify.Filter.Validate を参照。閾値の誤字がフィルタを静かに無効化して
+		// 全件通知になってしまうため、入口で必ず止める。
 		if err := req.Filter.Validate(); err != nil {
 			writeErr(w, 400, err.Error())
 			return
@@ -258,7 +261,7 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := pathInt(r, "id")
 	if !ok {
-		writeErr(w, 400, "渠道 id 无效")
+		writeErr(w, 400, "チャネル id が不正です")
 		return
 	}
 	current, err := pg.NotificationChannelByID(r.Context(), id)
@@ -268,15 +271,16 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	var req notifyChannelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "请求体不是合法 JSON: "+err.Error())
+		writeErr(w, 400, "リクエストボディが正しい JSON ではありません: "+err.Error())
 		return
 	}
 
-	// kind 允许修改，但改类型意味着凭据字段整套替换，不能与旧配置合并。
+	// kind の変更は許可するが、種別を変えるということは認証情報フィールドを丸ごと入れ替える
+	// ことなので、旧設定とマージしてはならない。
 	kind := current.Kind
 	if req.Kind != nil {
 		if !notify.ValidKind(*req.Kind) {
-			writeErr(w, 400, fmt.Sprintf("渠道类型无效，可选：%s", strings.Join(notify.Kinds(), " / ")))
+			writeErr(w, 400, fmt.Sprintf("チャネル種別が不正です。指定可能: %s", strings.Join(notify.Kinds(), " / ")))
 			return
 		}
 		kind = *req.Kind
@@ -292,8 +296,9 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 	if stored == nil {
 		stored = map[string]any{}
 	}
-	// 用 PrepareConfigUpdate 而不是裸的 MergeConfig：目标地址变更时必须让操作者
-	// 对凭据字段重新表态，否则「只改地址、凭据沿用」会把库里的真凭据发到新地址。
+	// 素の MergeConfig ではなく PrepareConfigUpdate を使う。宛先アドレスが変わったときは
+	// 操作者に認証情報フィールドを改めて表明させる必要がある。そうしないと「アドレスだけ変えて
+	// 認証情報は流用」で、DB の本物の認証情報が新しいアドレスへ送られてしまう。
 	merged, err := notify.PrepareConfigUpdate(kind, stored, req.Config)
 	if err != nil {
 		writeErr(w, 400, err.Error())
@@ -317,7 +322,7 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		if ch.Name = strings.TrimSpace(*req.Name); ch.Name == "" {
-			writeErr(w, 400, "渠道名称不能为空")
+			writeErr(w, 400, "チャネル名を空にはできません")
 			return
 		}
 	}
@@ -326,14 +331,14 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Mode != nil {
 		if !db.ValidNotifyMode(*req.Mode) {
-			writeErr(w, 400, "推送模式无效，可选：realtime / digest")
+			writeErr(w, 400, "通知モードが不正です。指定可能: realtime / digest")
 			return
 		}
 		ch.Mode = *req.Mode
 	}
 	if req.RatePerMin != nil {
 		if *req.RatePerMin < 0 {
-			writeErr(w, 400, "限流值不能为负")
+			writeErr(w, 400, "レート制限値は負にできません")
 			return
 		}
 		ch.RatePerMin = *req.RatePerMin
@@ -347,13 +352,14 @@ func (s *Server) notifyUpdateChannel(w http.ResponseWriter, r *http.Request) {
 		ch.Filter = raw
 	}
 
-	// 走 SetNotificationChannelEnabled 而非 SaveNotificationChannel 的路径，
-	// 是为了让「停用」同时把存量待发投递标记为 skipped，避免重新启用时收到
-	// 一批已过时的积压消息。
+	// SaveNotificationChannel ではなく SetNotificationChannelEnabled の経路を使うのは、
+	// 「無効化」が既存の未配信分を同時に skipped にするためである。再度有効化したときに
+	// すでに陳腐化した滞留メッセージの束が届くのを避ける。
 	enabledChanged := ch.Enabled != nil && current.Enabled != nil && *ch.Enabled != *current.Enabled
 	if enabledChanged {
-		// 先把配置更新落库（此时 enabled 用旧值，避免提前触发跳过逻辑），
-		// 再单独切开关。两步之间没有并发窗口：本接口是唯一改这两个字段的入口。
+		// まず設定の更新を DB に保存する（このとき enabled は旧値のままにして、スキップ処理が
+		// 早く走らないようにする）。その後でスイッチを別途切り替える。2 段階の間に並行実行の
+		// 隙間はない——この API がこれら 2 フィールドを変更する唯一の入口だから。
 		prev := ch.Enabled
 		ch.Enabled = current.Enabled
 		if _, err := pg.SaveNotificationChannel(r.Context(), ch); err != nil {
@@ -381,7 +387,7 @@ func (s *Server) notifyDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := pathInt(r, "id")
 	if !ok {
-		writeErr(w, 400, "渠道 id 无效")
+		writeErr(w, 400, "チャネル id が不正です")
 		return
 	}
 	if err := pg.DeleteNotificationChannel(r.Context(), id); err != nil {
@@ -391,11 +397,12 @@ func (s *Server) notifyDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// notifyTestChannel 用当前保存的配置发一条测试消息。
+// notifyTestChannel は現在保存されている設定でテストメッセージを 1 件送る。
 //
-// 直接调用渠道 Send 而不经投递队列：测试的目的是立刻告诉用户「这套配置能不能
-// 发出去」，走队列会把结果藏进投递历史，用户得再去翻一遍才知道成没成。
-// 因此本接口是**同步**的，超时上限由 notify 包的 HTTP 客户端决定（15 秒）。
+// 配信キューを経由せずにチャネルの Send を直接呼ぶ。テストの目的は「この設定で送れるか
+// どうか」を即座にユーザーへ伝えることであり、キューを経由すると結果が配信履歴に隠れ、
+// ユーザーが改めて見に行かないと成否が分からない。そのため本 API は**同期**で、
+// タイムアウト上限は notify パッケージの HTTP クライアントが決める（15 秒）。
 func (s *Server) notifyTestChannel(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
@@ -403,7 +410,7 @@ func (s *Server) notifyTestChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := pathInt(r, "id")
 	if !ok {
-		writeErr(w, 400, "渠道 id 无效")
+		writeErr(w, 400, "チャネル id が不正です")
 		return
 	}
 	ch, err := pg.NotificationChannelByID(r.Context(), id)
@@ -413,7 +420,7 @@ func (s *Server) notifyTestChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	channel, ok := notify.Get(ch.Kind)
 	if !ok {
-		writeErr(w, 400, fmt.Sprintf("渠道类型 %q 未注册", ch.Kind))
+		writeErr(w, 400, fmt.Sprintf("チャネル種別 %q は未登録", ch.Kind))
 		return
 	}
 	var cfg map[string]any
@@ -426,10 +433,10 @@ func (s *Server) notifyTestChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := notifyTestMessage(s.notifierBaseURL(pg))
 	start := time.Now()
-	// 测试消息只有一条，送达条数这里不需要（渠道长度上限对单条消息而言
-	// 由截断兜底，不涉及分段）。
+	// テストメッセージは 1 件だけなので、配信件数はここでは不要（単一メッセージに対する
+	// チャネルの長さ上限は切り詰めで処理され、分割は発生しない）。
 	if _, err := channel.Send(r.Context(), cfg, msg); err != nil {
-		// 把渠道返回的原始错误如实回给用户——这是他们调试配置的唯一线索。
+		// チャネルが返した生のエラーをそのままユーザーに返す——設定をデバッグする唯一の手がかりだから。
 		writeErr(w, 502, err.Error())
 		return
 	}
@@ -439,16 +446,16 @@ func (s *Server) notifyTestChannel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// notifyTestMessage 构造测试消息。刻意用一眼能看出是测试的内容：
-// 收到的人不应该把它误判成真实漏洞。
+// notifyTestMessage はテストメッセージを組み立てる。一目でテストだと分かる内容を意図的に使う。
+// 受け取った人が本物の脆弱性と誤認してはならない。
 func notifyTestMessage(baseURL string) notify.Message {
 	return notify.Message{
 		Items: []notify.Item{{
 			FindingID: 0,
-			Name:      "测试消息 · 渠道配置正常",
-			VulnClass: "连通性测试",
+			Name:      "テストメッセージ · チャネル設定は正常",
+			VulnClass: "疎通テスト",
 			Severity:  "low",
-			Summary:   "这是 ARTEX 推送渠道的测试消息，收到即表示该渠道配置可用。",
+			Summary:   "これは ARTEX 通知チャネルのテストメッセージです。受信できていればこのチャネルの設定は有効です。",
 			Assets:    []string{"artex.example.com"},
 			DetailURL: baseURL,
 		}},
@@ -456,7 +463,7 @@ func notifyTestMessage(baseURL string) notify.Message {
 	}
 }
 
-// notifierBaseURL 读回链用的外部地址。
+// notifierBaseURL はバックリンク用の外部アドレスを読み取る。
 func (s *Server) notifierBaseURL(pg *db.DB) string {
 	v, _, _ := pg.GetSetting(settingNotifyPublicBaseURL)
 	return trimTrailingSlash(v)
@@ -495,7 +502,7 @@ func (s *Server) notifyRetryDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := pathInt(r, "id")
 	if !ok {
-		writeErr(w, 400, "投递 id 无效")
+		writeErr(w, 400, "配信 id が不正です")
 		return
 	}
 	if err := pg.RetryNotificationDelivery(r.Context(), id); err != nil {
@@ -505,10 +512,10 @@ func (s *Server) notifyRetryDelivery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// notifyChannelLookupErr 把「渠道不存在」翻译成 404，其余错误 500。
+// notifyChannelLookupErr は「チャネルが存在しない」を 404 に、それ以外のエラーを 500 に翻訳する。
 func notifyChannelLookupErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, db.ErrNotificationChannelNotFound) {
-		writeErr(w, 404, "通知渠道不存在")
+		writeErr(w, 404, "通知チャネルが存在しません")
 		return
 	}
 	writeErr(w, 500, err.Error())
