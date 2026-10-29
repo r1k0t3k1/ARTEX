@@ -60,8 +60,8 @@ func TestParseAutoScopeLine(t *testing.T) {
 		{name: "icp chinese", input: "沪网备案 9988", kind: "icp", normalized: "沪网备案9988"},
 		{name: "icp domain", input: "icp.example.com", kind: "domain", normalized: "icp.example.com"},
 		{name: "icp url query", input: "https://example.com/path?icp=1", kind: "domain", normalized: "example.com"},
-		// 备案号不含点号：掺了域名/版本号的描述性文字归关键词，否则会存成一条
-		// 永远匹配不上的死 ICP 规则。
+		// ICP 登録番号にドットを含まない：ドメインやバージョン番号を混ぜた説明的な文字列はキーワード扱いにする。
+		// さもないと永遠に一致しない死んだ ICP ルールとして保存されてしまう。
 		{name: "icp with domain text", input: "备案 www.example.com", kind: "keyword", normalized: "备案 www.example.com"},
 		{name: "icp with version text", input: "某公司 ICP v1.0", kind: "keyword", normalized: "某公司 icp v1.0"},
 		{name: "icp fullwidth dot", input: "备案 例．com", kind: "keyword", normalized: "备案 例．com"},
@@ -233,14 +233,14 @@ func TestCompanyICPAttribution(t *testing.T) {
 	if err != nil {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
-	// 关连接必须走 t.Cleanup 且**注册在清理之前**：t.Cleanup 是后进先出，
-	// 先注册关闭 → 关闭最后执行，下面的数据清理才连得上库。
-	// 原先这里是 `defer d.Close()`：defer 在函数返回时先跑，t.Cleanup 在那之后
-	// 才执行，于是清理语句全落在**已关闭的连接**上、错误又被 `_, _ =` 丢弃，
-	// 资产与公司就永久残留在库里。残留本身不会立刻报错，但本用例用
-	// `MAX(companies.id)+1` 当假 TaskID 给资产打标（见下方 suffix），
-	// 一旦这个数字与别的用例的任务 id 撞上，那个用例按「恰好 N 个资产」的断言
-	// 就会莫名失败——排查成本极高。
+	// 接続のクローズは必ず t.Cleanup で行い、しかも**後始末より先に登録**する：t.Cleanup は後入れ先出しなので、
+	// 先にクローズを登録 → クローズが最後に実行され、下のデータ後始末が DB に接続できる。
+	// 以前ここは `defer d.Close()` だった：defer は関数の return 時に先に走り、t.Cleanup はその後に
+	// 実行されるため、後始末の文がすべて**閉じた接続**上で走り、しかもエラーが `_, _ =` で捨てられて、
+	// 資産と企業が DB に永久に残っていた。残留自体はすぐにはエラーにならないが、このテストは
+	// `MAX(companies.id)+1` を偽の TaskID として資産に付ける（下の suffix 参照）ため、
+	// この数字が他のテストのタスク id と衝突すると、そのテストの「ちょうど N 件の資産」という検証が
+	// 不可解に失敗する——原因究明のコストが極めて高い。
 	t.Cleanup(func() { d.Close() })
 
 	var suffix int64
@@ -254,16 +254,16 @@ func TestCompanyICPAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// 不吞错误：清理失败会污染后续用例，必须让它在本次运行里显形。
+		// エラーを飲み込まない：後始末の失敗は後続のテストを汚染するので、今回の実行で必ず表面化させる。
 		if _, err := d.Exec(`DELETE FROM assets WHERE task_ids @> ARRAY[$1]::bigint[]`, suffix); err != nil {
-			t.Errorf("清理测试资产失败: %v", err)
+			t.Errorf("テスト資産の後始末に失敗: %v", err)
 		}
 		if _, err := d.Exec(`DELETE FROM companies WHERE id=$1`, companyID); err != nil {
-			t.Errorf("清理测试公司失败: %v", err)
+			t.Errorf("テスト企業の後始末に失敗: %v", err)
 		}
 	})
 
-	// A keyword can guide an Agent, but must never claim an asset by its name.
+	// キーワードは Agent を導けるが、その名前で資産を主張してはならない。
 	added, _, invalid, errs := cs.AddScopeInputs(companyID, []ScopeInput{
 		{Kind: "icp", Value: "京 ICP备 998877号"},
 		{Kind: "keyword", Value: "ICP Scope"},
@@ -309,10 +309,9 @@ func TestCompanyICPAttribution(t *testing.T) {
 	assertCompany(icpAppID, &companyID)
 }
 
-// TestCompanyScopeAttribution exercises the full loop against dev PG: create
-// company (unique name), add scope, and verify auto-attribution at insert time,
-// backfill of a pre-existing asset, CIDR + domain-suffix matching, and that
-// out-of-scope assets stay unattributed.
+// TestCompanyScopeAttribution は開発用 PG に対して一連の流れを実走する：企業を作成し（一意な名前）、
+// スコープを追加し、挿入時の自動紐付け、既存資産のバックフィル、CIDR + ドメイン接尾辞の一致、
+// そしてスコープ外の資産が紐付かないことを検証する。
 func TestCompanyScopeAttribution(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
@@ -343,7 +342,7 @@ func TestCompanyScopeAttribution(t *testing.T) {
 		t.Fatalf("UpsertCompany: %v", err)
 	}
 
-	// a pre-existing asset (inserted BEFORE any scope) — must be back-filled.
+	// 既存資産（スコープ追加より前に挿入）——バックフィルされねばならない。
 	preID, err := as.UpsertSubdomain(UpsertSubdomainReq{Domain: sub})
 	if err != nil {
 		t.Fatalf("pre upsert: %v", err)
@@ -374,10 +373,10 @@ func TestCompanyScopeAttribution(t *testing.T) {
 		}
 	}
 
-	// backfill attributed the pre-existing subdomain (domain suffix match).
+	// バックフィルが既存サブドメインを紐付けた（ドメイン接尾辞の一致）。
 	mustCid(preID, cid, "pre-existing subdomain (backfill)")
 
-	// insert-time attribution: ip in CIDR, another subdomain.
+	// 挿入時の紐付け：CIDR 内の IP と、もう 1 つのサブドメイン。
 	ipInID, err := as.UpsertIP(UpsertIPReq{IP: ipIn})
 	if err != nil {
 		t.Fatalf("UpsertIP in: %v", err)
@@ -390,7 +389,7 @@ func TestCompanyScopeAttribution(t *testing.T) {
 	}
 	mustCid(sub2ID, cid, "new subdomain (insert-time)")
 
-	// out of scope stays unattributed.
+	// スコープ外は紐付かないまま。
 	outID, err := as.UpsertRootDomain(UpsertRootDomainReq{Domain: outDomain})
 	if err != nil {
 		t.Fatalf("UpsertRootDomain out: %v", err)

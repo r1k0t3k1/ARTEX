@@ -12,7 +12,7 @@ func TestActivityPageSessions(t *testing.T) {
 	}
 	defer d.Close()
 
-	expID, err := d.CreateExploration("test", "分页历史")
+	expID, err := d.CreateExploration("test", "ページング履歴")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestListByKindPage(t *testing.T) {
 	}
 	defer d.Close()
 
-	expID, err := d.CreateExploration("test", "意图分页")
+	expID, err := d.CreateExploration("test", "意図のページング")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import (
 // Task is a row in the task registry (1:1 with an exploration).
 type Task struct {
 	ID            int64      `json:"id"`
-	Name          string     `json:"name"` // 可选任务名称;空=未命名
+	Name          string     `json:"name"` // 任意のタスク名。空=無名
 	CategoryID    *int64     `json:"category_id,omitempty"`
 	CategoryName  string     `json:"category_name,omitempty"`
 	Pinned        bool       `json:"pinned"`
@@ -35,20 +35,23 @@ type Task struct {
 	LLMFailoverReason  string     `json:"llm_failover_reason,omitempty"`
 	SourceTaskIDs      []int64    `json:"source_task_ids,omitempty"`
 	CompanyIDs         []int64    `json:"company_ids,omitempty"`
-	ParentRef          string     `json:"parent_ref,omitempty"` // 父任务 id(编排 spawn 记录;空=顶层)
+	ParentRef          string     `json:"parent_ref,omitempty"` // 親タスク id（オーケストレーションの spawn 記録。空=トップレベル）
 	CreatedAt          time.Time  `json:"created_at"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"` // 进入终态(done/failed/timeout)的时刻;非终态为 nil
-	// 任务级超时(见 docs/任务级超时与收尾设计.md)。
-	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=不限时
-	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // 首次真正开始运行的时刻(非 created_at);nil=尚未运行
-	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds;nil=不限或未运行
-	// planner 心跳触发间隔(秒)：距上轮 plan 结束/任务开始满该值且期间无触发 → 触发一轮。
-	// 下限=默认=300(5min)，低于一律抬到 300(在 CreateTask 归一)。见 docs/planner-trigger-impl-plan.md
+	CompletedAt        *time.Time `json:"completed_at,omitempty"` // 終端状態（done/failed/timeout）に入った時刻。非終端状態では nil
+	// タスクレベルのタイムアウト（docs/任务级超时与收尾设计.md 参照）。
+	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=時間制限なし
+	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // 初めて実際に実行を開始した時刻（created_at ではない）。nil=未実行
+	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`  // = first_run_at + timeout_seconds。nil=制限なしまたは未実行
+	// planner ハートビートのトリガー間隔（秒）。前回の plan 終了/タスク開始からこの値に
+	// 達し、その間にトリガーがない場合に 1 ラウンド起動する。
+	// 下限=既定=300（5min）で、それ未満は一律 300 に引き上げる（CreateTask で正規化）。
+	// docs/planner-trigger-impl-plan.md 参照。
 	PlanHeartbeatSeconds int `json:"plan_heartbeat_seconds"`
-	// CoverageEnabled 是「资产覆盖度功能」总开关(默认 true)。false 时：不计算/不展示测试
-	// 覆盖度、不自动累积 task_scope(source=auto)、不给 agent 开放 add_task_scope/
-	// list_untested_assets、态势里不注入 coverage 块(scope 字段仍保留)。company 关联
-	// (task_scope kind=company)与此开关无关，永不受影响。见 db/task_scope.go。
+	// CoverageEnabled は「資産カバレッジ機能」の総スイッチ（既定 true）。false のときは
+	// テストカバレッジを計算・表示せず、task_scope(source=auto) を自動蓄積せず、agent に
+	// add_task_scope / list_untested_assets を公開せず、状況に coverage ブロックも
+	// 注入しない（scope フィールドは残る）。company 関連（task_scope kind=company）は
+	// このスイッチと無関係で、常に影響を受けない。db/task_scope.go 参照。
 	CoverageEnabled bool `json:"coverage_enabled"`
 }
 
@@ -70,16 +73,17 @@ type TaskDeletePreparation struct {
 }
 
 // IsTerminal reports whether a task status is a terminal (finished) state.
-// 单一真源，替换散落各处的 done/failed 硬编码判定。
+// 単一の真実源。各所に散らばった done/failed のハードコード判定を置き換える。
 func IsTerminal(status string) bool {
 	return status == "done" || status == "failed" || status == "timeout"
 }
 
 // CreateTask creates an exploration + task in one transaction and returns the task.
-// timeoutSeconds is the task-level wall-clock budget (0 = 不限时); deadline_at is
+// timeoutSeconds is the task-level wall-clock budget (0 = 時間制限なし); deadline_at is
 // stamped later at first real run (see engine), not here.
-// MinPlanHeartbeatSeconds 是 planner 心跳间隔的下限 = 默认 = 10min。
-// 低于它(含缺省 0 / 负值 / 误配的小值)一律抬到 10min，防止把 planner 打爆。
+// MinPlanHeartbeatSeconds は planner ハートビート間隔の下限 = 既定 = 10min。
+// これ未満（既定 0 / 負値 / 誤設定の小さい値）は一律 10min に引き上げ、
+// planner の過剰起動を防ぐ。
 const MinPlanHeartbeatSeconds = 600
 
 // MaxTaskSourceCount bounds the amount of live inherited context one task can
@@ -144,17 +148,19 @@ func (d *DB) CreateTask(description, goal string, llmProfileID *int64, timeoutSe
 // TaskCreateOptions contains the task data that must be committed atomically
 // with the task/exploration row.
 type TaskCreateOptions struct {
-	Name                 string // 可选任务名称;空=未命名
+	Name                 string // 任意のタスク名。空=無名
 	CategoryID           *int64
 	SourceTaskIDs        []int64
 	CompanyIDs           []int64
 	LLMProfileIDs        []int64
 	TimeoutSeconds       int
 	PlanHeartbeatSeconds int
-	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
-	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
+	// CoverageEnabled は「資産カバレッジ機能」のスイッチ。nil=既定で有効（true）で、
+	// このスイッチを気にしない作成経路（オーケストレーション spawn、旧 API）が従来の
+	// 挙動を保てるようにする。web からタスクを作成するときだけ明示的に false を渡して
+	// 無効化できる。
 	CoverageEnabled *bool
-	// InterceptRules 是任务级资产拦截规则,创建时随任务在同一事务内写入 task_intercept_rules。
+	// InterceptRules はタスクレベルの資産インターセプトルールで、作成時にタスクと同じトランザクション内で task_intercept_rules に書き込む。
 	InterceptRules []TaskInterceptRuleInput
 }
 
@@ -184,7 +190,7 @@ func (d *DB) CreateTaskWithOptions(description, goal string, opts TaskCreateOpti
 	// is global and shared, not isolated per task). Being a fact (not a special 'begin' kind) lets every
 	// intent uniformly connect to a fact node, including the first ones.
 	originPayload, _ := json.Marshal(map[string]any{
-		"summary":     "任务起点：" + description + "；目标：" + goal,
+		"summary":     "タスク起点：" + description + "；ゴール：" + goal,
 		"description": description,
 		"goal":        goal,
 	})
@@ -267,7 +273,7 @@ WITH requested(company_id, position) AS (
     FROM unnest($2::bigint[]) WITH ORDINALITY AS requested(company_id, position)
 ), inserted AS (
     INSERT INTO task_scope(task_id, kind, company_id, source, reason)
-    SELECT $1, 'company', companies.id, 'manual', '任务创建时关联企业'
+    SELECT $1, 'company', companies.id, 'manual', 'タスク作成時に企業を関連付け'
     FROM requested
     JOIN companies ON companies.id=requested.company_id
     ORDER BY requested.position
@@ -295,7 +301,7 @@ WHERE company_id=ANY($2::bigint[])`, taskID, companyIDs); err != nil {
 	}
 	if _, err := tx.Exec(`
 INSERT INTO task_asset_links(task_id, asset_id, source, source_summary)
-SELECT $1, asset.id, $3, '任务创建时关联企业：' || company.name
+SELECT $1, asset.id, $3, 'タスク作成時に企業を関連付け：' || company.name
 FROM assets asset
 JOIN companies company ON company.id=asset.company_id
 WHERE asset.company_id=ANY($2::bigint[])
@@ -355,7 +361,7 @@ func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	return &t, nil
 }
 
-// SetParentRef records a task's parent task id (编排 agent spawn_task 关联).
+// SetParentRef はタスクの親タスク id を記録する（オーケストレーション agent の spawn_task 関連付け）。
 func (d *DB) SetParentRef(id int64, parentRef string) error {
 	_, err := d.Exec(`UPDATE tasks SET parent_ref=NULLIF($2,'') WHERE id=$1`, id, parentRef)
 	return err
@@ -363,7 +369,7 @@ func (d *DB) SetParentRef(id int64, parentRef string) error {
 
 // ListTasks returns alive tasks with pinned tasks first, then newest ids.
 func (d *DB) ListTasks() ([]*Task, error) {
-	// id 是 BIGSERIAL，同一时刻创建的任务也有稳定且唯一的顺序。
+	// id は BIGSERIAL なので、同時刻に作成されたタスクでも安定かつ一意な順序になる。
 	rows, err := d.Query(`SELECT ` + taskCols + ` FROM tasks WHERE deleted_at IS NULL
 ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, id DESC`)
 	if err != nil {
@@ -506,14 +512,14 @@ UPDATE tasks
 // StampFirstRun records a task's first-real-run moment and computes its absolute
 // deadline (= now + timeoutSeconds). Idempotent: only stamps when first_run_at is
 // still NULL, so restarts / re-entries keep the original clock. timeoutSeconds<=0
-// leaves deadline_at NULL (不限时). Returns the resulting deadline (nil = 不限/未变).
+// leaves deadline_at NULL (時間制限なし). Returns the resulting deadline (nil = 制限なし/未変更).
 func (d *DB) StampFirstRun(id int64, timeoutSeconds int) (*time.Time, error) {
 	var deadline *time.Time
 	err := d.QueryRow(`
 UPDATE tasks
    SET first_run_at = COALESCE(first_run_at, now()),
        deadline_at  = CASE
-           WHEN first_run_at IS NOT NULL THEN deadline_at            -- 已盖过章：不动
+           WHEN first_run_at IS NOT NULL THEN deadline_at            -- スタンプ済み：変更しない
            WHEN $2 > 0 THEN now() + make_interval(secs => $2)
            ELSE NULL END
  WHERE id = $1

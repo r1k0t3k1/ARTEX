@@ -12,7 +12,7 @@ func TestExplorationFlow(t *testing.T) {
 	}
 	defer d.Close()
 
-	expID, err := d.CreateExploration("test", "拿下测试目标")
+	expID, err := d.CreateExploration("test", "テスト対象を攻略する")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +247,8 @@ func TestIntentPauseResumeAndCancelCleanup(t *testing.T) {
 	assertCount(`SELECT COUNT(*) FROM assets WHERE id=$1`, 1, assetID)
 }
 
-// TestNodesPageQueryMatchesID verifies the 播报板 search filters on node id (both
-// the bare number and the「#id」form the UI shows) in addition to payload/origin.
+// TestNodesPageQueryMatchesID は、掲示板の検索がペイロード/由来に加えてノード id でも
+// 絞り込まれること（UI が表示する素の番号と「#id」形式の両方）を検証する。
 func TestNodesPageQueryMatchesID(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
@@ -256,7 +256,7 @@ func TestNodesPageQueryMatchesID(t *testing.T) {
 	}
 	defer d.Close()
 
-	expID, err := d.CreateExploration("test", "id 搜索")
+	expID, err := d.CreateExploration("test", "id 検索")
 	if err != nil {
 		t.Fatal(err)
 	}
