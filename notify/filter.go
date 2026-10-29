@@ -7,40 +7,47 @@ import (
 	"strings"
 )
 
-// Filter 是 notification_channels.filter 这一 JSONB 列的契约：渠道实例的过滤条件。
-// 所有字段都可选，缺省即「不过滤」——这正是畸形配置的兜底语义，见 ParseFilter。
+// Filter は notification_channels.filter という JSONB 列の契約：チャネルインスタンスの
+// フィルタ条件。全フィールドが任意で、省略は「フィルタしない」を意味する——これが
+// 不正な設定に対するフォールバックの意味論であり、ParseFilter を参照。
 type Filter struct {
-	// MinSeverity 是最低级别门槛（low/medium/high/critical），空=不设门槛。
+	// MinSeverity は最低レベルのしきい値（low/medium/high/critical）。空=しきい値なし。
 	MinSeverity string `json:"min_severity"`
-	// TaskIDs / AssetIDs 为空数组表示不限；非空则要求事件与它有交集。
+	// TaskIDs / AssetIDs が空配列なら制限なし。非空ならイベントと共通部分を持つことを要求する。
 	TaskIDs  []int64 `json:"task_ids"`
 	AssetIDs []int64 `json:"asset_ids"`
-	// VulnClassInclude 为空表示全收；非空则要求 vulnclass 命中其中任一关键词。
-	// VulnClassExclude 命中任一关键词即排除（排除优先于包含）。
-	// 匹配方式为大小写不敏感的子串——比正则安全：用户配错正则不会让渠道静默失效。
+	// VulnClassInclude が空ならすべて受理。非空なら vulnclass がいずれかの
+	// キーワードに一致することを要求する。
+	// VulnClassExclude はいずれかのキーワードに一致すれば除外（除外は包含より優先）。
+	// マッチングは大文字小文字を区別しない部分一致——正規表現より安全：ユーザーが
+	// 正規表現を間違えてもチャネルが黙って無効化されない。
 	VulnClassInclude []string `json:"vulnclass_include"`
 	VulnClassExclude []string `json:"vulnclass_exclude"`
-	// OnStatusChange 决定该渠道是否接收漏洞状态变更事件（仅 realtime 模式有意义）。
+	// OnStatusChange はそのチャネルが脆弱性ステータス変更イベントを受け取るかを
+	// 決める（realtime モードでのみ意味を持つ）。
 	OnStatusChange bool `json:"on_status_change"`
 }
 
-// ParseFilter 解析渠道过滤配置。
+// ParseFilter はチャネルのフィルタ設定を解析する。
 //
-// **永不返回 error。** 这是刻意的设计选择：过滤条件配置畸形时一律退化为零值
-// Filter（= 不过滤 = 全部命中），因为对一个漏洞通知系统来说，**多推一条远好过
-// 静默漏掉一条高危**。让解析失败变成「不推送」，等于给用户一个看起来配好了、
-// 实际什么都不推的渠道——这是最糟的失败模式。
+// **決して error を返さない。** これは意図的な設計選択：フィルタ条件の設定が
+// 不正なときは一律にゼロ値の Filter（= フィルタしない = すべてヒット）へ退化させる。
+// 脆弱性通知システムにとって、**1 件多く配信する方が高危険度を黙って取りこぼすより
+// はるかにまし**だから。解析失敗を「配信しない」に変えると、ユーザーには設定済みに
+// 見えながら実際には何も配信しないチャネルを渡すことになる——これが最悪の失敗
+// モードだ。
 func ParseFilter(raw []byte) Filter {
 	var f Filter
 	if len(raw) == 0 {
 		return f
 	}
-	// 解析失败时 f 保持零值，即不过滤。
+	// 解析に失敗したときは f はゼロ値のまま、つまりフィルタしない。
 	_ = json.Unmarshal(raw, &f)
 	return f
 }
 
-// ValidMinSeverity 报告 s 是否为合法的级别门槛（空串表示不设门槛）。
+// ValidMinSeverity は s が有効なレベルのしきい値かどうかを報告する
+// （空文字列はしきい値なしを表す）。
 func ValidMinSeverity(s string) bool {
 	if s == "" {
 		return true
@@ -49,30 +56,36 @@ func ValidMinSeverity(s string) bool {
 	return ok
 }
 
-// Validate 校验过滤配置里**取值受限**的字段，供保存渠道时调用。
+// Validate はフィルタ設定のうち**値が制限される**フィールドを検証し、チャネル保存時に
+// 呼ばれる。
 //
-// 为什么必须在写入时拦：Match 对未知门槛的判定是 `rank >= 0`，恒为真——
-// 也就是说 min_severity 打错一个字（"hgih"），过滤器会**静默失效**变成
-// 「全推」。这与本包「宁可多推不可漏推」的取舍方向一致（不会漏），
-// 但后果是用户以为自己在做分级推送、实际把全部漏洞灌进群里，
-// 而且没有任何迹象提示他配错了。这类「静默降级」正应该在入口处拦掉。
+// なぜ書き込み時に必ず止める必要があるか：Match は未知のしきい値に対して
+// `rank >= 0` を判定し、常に真になる——つまり min_severity を 1 文字打ち間違える
+// （"hgih"）と、フィルタは**黙って無効化**されて「全部配信」になる。これは本パッケージ
+// の「取りこぼすより多く配信する」という取捨の方向（取りこぼさない）とは一致するが、
+// 結果としてユーザーはレベル別配信をしているつもりで、実際にはすべての脆弱性を
+// グループに流し込んでおり、設定ミスを示す兆候も一切ない。こうした「静かな劣化」こそ
+// 入口で止めるべきもの。
 //
-// 注意 Validate 只用于**写入**路径。读取路径仍走 ParseFilter 的宽容语义，
-// 这样历史数据里已经存在的坏值不会让渠道整个读不出来。
+// 注意：Validate は**書き込み**経路でのみ使う。読み取り経路は引き続き ParseFilter の
+// 寛容な意味論を通すことで、履歴データにすでに存在する不正値がチャネル全体を
+// 読み出せなくすることを防ぐ。
 func (f Filter) Validate() error {
 	if !ValidMinSeverity(f.MinSeverity) {
-		return fmt.Errorf("最低级别 %q 无效，可选：low / medium / high / critical，或留空表示不限", f.MinSeverity)
+		return fmt.Errorf("最低レベル %q が無効です。選択肢：low / medium / high / critical、または空欄で制限なし", f.MinSeverity)
 	}
 	return nil
 }
 
-// Match 判定一个事件是否应投递到带有该过滤条件的渠道。
+// Match はイベントをそのフィルタ条件を持つチャネルへ配信すべきかを判定する。
 //
-// **永不返回 error**，理由同 ParseFilter：任何内部异常都按「命中」处理。
-// 判定顺序：事件类型 → 级别门槛 → 任务/资产范围 → 漏洞类型关键词。
+// **決して error を返さない**。理由は ParseFilter と同じ：内部の異常はすべて
+// 「ヒット」として扱う。判定順：イベント種別 → レベルのしきい値 → タスク／資産の
+// 範囲 → 脆弱性タイプのキーワード。
 func Match(f Filter, s Snapshot) bool {
-	// 状态变更事件只有显式开启的渠道才接收。默认关，因为绝大多数使用者
-	// 期望「推送」指的是「发现新漏洞」，而不是流水账式地跟进每个状态流转。
+	// ステータス変更イベントは明示的に有効化したチャネルだけが受け取る。既定は
+	// 無効。ほとんどの利用者が「配信」で期待するのは「新しい脆弱性の検出」であって、
+	// 各ステータスの遷移を逐一追いかけることではないため。
 	if s.Kind == EventFindingStatusChanged && !f.OnStatusChange {
 		return false
 	}
@@ -85,7 +98,8 @@ func Match(f Filter, s Snapshot) bool {
 	if len(f.AssetIDs) > 0 && !intersectsInt(f.AssetIDs, s.AssetIDs) {
 		return false
 	}
-	// 排除优先：命中任一排除关键词即出局，即便同时命中了包含列表。
+	// 除外優先：除外キーワードのいずれかに一致すれば、包含リストにも一致していても
+	// 対象外とする。
 	if len(f.VulnClassExclude) > 0 && containsAnyFold(s.VulnClass, f.VulnClassExclude) {
 		return false
 	}
@@ -96,8 +110,8 @@ func Match(f Filter, s Snapshot) bool {
 }
 
 func intersectsInt(a, b []int64) bool {
-	// 小集合线性扫描即可；两边的量级都是「人手勾选的几十个」，
-	// 建 map 的开销大于收益。
+	// 小さな集合なので線形走査で十分。両者の規模は「人がチェックボックスで選ぶ
+	// 数十件」であり、map を作るコストが利得を上回る。
 	for _, v := range b {
 		if slices.Contains(a, v) {
 			return true
@@ -106,7 +120,8 @@ func intersectsInt(a, b []int64) bool {
 	return false
 }
 
-// containsAnyFold 报告 s 是否包含 keywords 中任一关键词（大小写不敏感）。
+// containsAnyFold は s がいずれかのキーワードを含むかを報告する（大文字小文字
+// を区別しない）。
 func containsAnyFold(s string, keywords []string) bool {
 	lower := strings.ToLower(s)
 	for _, kw := range keywords {

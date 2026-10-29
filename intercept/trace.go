@@ -147,7 +147,7 @@ func (t *Trace) Finish() {
 	t.mu.Unlock()
 	for _, c := range calls {
 		if c.complete != nil {
-			c.complete("unknown", "执行结束但未收到工具结果", false)
+			c.complete("unknown", "実行は終了したがツール結果を受信していない", false)
 		}
 	}
 }

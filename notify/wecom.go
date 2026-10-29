@@ -7,37 +7,41 @@ import (
 	"fmt"
 )
 
-// weComMarkdownLimit 是企微群机器人 markdown content 的硬上限（字节，非字符）。
-// 这是全部六个渠道里最紧的限制，也是 TruncateBytes 存在的主要原因。
+// weComMarkdownLimit は WeCom グループボットの markdown content の厳格な上限
+// （バイト数、文字数ではない）。全 6 チャネル中で最も厳しい制限であり、
+// TruncateBytes が存在する主な理由でもある。
 const weComMarkdownLimit = 4096
 
-// weComChannel 实现企业微信群机器人。
+// weComChannel は WeCom グループボットを実装する。
 //
-// 平台特性：
-//   - 唯一通过 URL 上的 key 鉴权，不支持加签——所以 webhook 地址本身就是全部凭据。
-//   - markdown content 上限 4096 **字节**，超长整条被拒（不是截断）。中文 3 字节/字，
-//     意味着正文只有一千多字可写，必须客户端截断。
-//   - 限流 20 条/分钟，同样靠客户端限流兜住。
+// プラットフォームの特性：
+//   - URL 上の key だけで認証し、署名をサポートしない——したがって webhook
+//     アドレス自身がすべての資格情報。
+//   - markdown content の上限は 4096 **バイト**で、超過するとメッセージ全体が
+//     拒否される（切り詰めではない）。日本語は 3 バイト/文字なので、本文に書けるのは
+//     1000 文字強しかなく、クライアント側での切り詰めが必須。
+//   - レート制限は 20 通/分で、これもクライアント側のレート制限で吸収する。
 type weComChannel struct{}
 
 func (weComChannel) Kind() string { return KindWeCom }
 
 func (weComChannel) DefaultRatePerMin() int { return 20 }
 
-// 企业微信只有 Webhook 一处凭据（URL 上的 key），且它不支持加签——
-// 整个地址就是全部凭据，没有别的字段需要掩码。
+// WeCom の資格情報は Webhook の 1 か所（URL 上の key）だけで、署名もサポート
+// しない——アドレス全体がすべての資格情報であり、他にマスクすべきフィールドはない。
 func (weComChannel) SecretKeys() []string { return []string{"webhook"} }
 
-// 企微只有 Webhook 一处字段，它既是目的地也是凭据，因此没有「改地址后残留的凭据」可言。
+// WeCom のフィールドは Webhook の 1 か所だけで、それが宛先でも資格情報でもある
+// ため、「アドレス変更後に残る資格情報」というものは存在しない。
 func (weComChannel) DestinationKeys() []string { return []string{"webhook"} }
 
 func (weComChannel) Validate(cfg map[string]any) error {
 	hook := cfgString(cfg, "webhook")
 	if hook == "" {
-		return errors.New("缺少 Webhook 地址")
+		return errors.New("Webhook アドレスがありません")
 	}
 	if err := validateHTTPURL(hook); err != nil {
-		return fmt.Errorf("Webhook 地址无效: %w", err)
+		return fmt.Errorf("Webhook アドレスが無効です: %w", err)
 	}
 	return nil
 }
@@ -46,8 +50,9 @@ func (c weComChannel) Send(ctx context.Context, cfg map[string]any, m Message) (
 	if err := c.Validate(cfg); err != nil {
 		return 0, Permanent(err)
 	}
-	// 汇总批可能很长（50 条 × 每条一行 + 前缀），4096 字节很容易超。
-	// 截断在这里做而不是靠平台报错：被拒意味着这一批全丢，而截断至少送达前若干条。
+	// 集約バッチは長くなりがち（50 件 × 各 1 行 + プレフィックス）で、4096 バイトを
+	// 容易に超える。切り詰めはプラットフォームのエラーに頼らずここで行う：拒否は
+	// バッチ全体の消失を意味するが、切り詰めなら少なくとも先頭の数件は届く。
 	content, kept := markdownBody(m, weComMarkdownLimit)
 	payload := map[string]any{
 		"msgtype":  "markdown",
@@ -62,17 +67,18 @@ func (c weComChannel) Send(ctx context.Context, cfg map[string]any, m Message) (
 		ErrMsg  string `json:"errmsg"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return 0, fmt.Errorf("解析企业微信响应失败: %w (%s)", err, snippet(raw))
+		return 0, fmt.Errorf("WeCom のレスポンス解析に失敗しました: %w (%s)", err, snippet(raw))
 	}
 	if res.ErrCode != 0 {
-		// 45009 是接口调用超过限制——平台的限流窗口会滚动，退避后重试是有效的，
-		// 所以显式归为可重试。走到这里说明客户端 rate_per_min 配得过于激进，
-		// 重试只是兜底，真正的修法是调低该渠道的限流值。
+		// 45009 は API 呼び出し回数超過——プラットフォームのレート制限窓は
+		// ローリングするので、バックオフ後の再試行は有効。明示的に再試行可能として
+		// 扱う。ここに来た時点でクライアント側の rate_per_min が攻めすぎている証拠で、
+		// 再試行はあくまで保険、本当の対処はそのチャネルのレート制限値を下げること。
 		if res.ErrCode == 45009 {
-			return 0, fmt.Errorf("企业微信限流 %d: %s", res.ErrCode, res.ErrMsg)
+			return 0, fmt.Errorf("WeCom のレート制限 %d: %s", res.ErrCode, res.ErrMsg)
 		}
-		// 93000 是 webhook key 无效——永久失败，重试不会自愈。
-		return 0, Permanent(fmt.Errorf("企业微信返回错误 %d: %s", res.ErrCode, res.ErrMsg))
+		// 93000 は webhook key が無効——恒久的失敗で、再試行しても自然には直らない。
+		return 0, Permanent(fmt.Errorf("WeCom がエラーを返しました %d: %s", res.ErrCode, res.ErrMsg))
 	}
 	return kept, nil
 }

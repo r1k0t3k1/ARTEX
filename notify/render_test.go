@@ -7,28 +7,29 @@ import (
 )
 
 func TestTruncateBytesKeepsValidUTF8(t *testing.T) {
-	// 这是本包最要紧的一条不变量。企微按**字节**限长，中文 3 字节/字，
-	// 任何按字节硬切的实现都会把汉字切成半个，产出非法 UTF-8 而被平台拒收。
-	// 用长度互质的多种中英混排输入去撞每一个可能的切点。
+	// これは本パッケージで最も重要な不変条件。WeCom は**バイト**数で長さを制限し、
+	// 日本語は 3 バイト/文字なので、バイト単位でぶった切る実装は必ず文字を半分に
+	// して不正な UTF-8 を生み、プラットフォームに拒否される。長さが互いに素な
+	// 多種の日中混在入力を用意し、あらゆる切れ目を突く。
 	inputs := []string{
-		"中文测试内容",
+		"日本語テスト内容",
 		"混合 mixed 内容 content",
-		"a中b文c测d试e",
-		"🔴🟠🟡🔵", // 4 字节 emoji，切错更明显
-		strings.Repeat("漏洞", 100),
+		"a日b本c語dテe",
+		"🔴🟠🟡🔵", // 4 バイトの emoji で、切れ目の誤りがより明白
+		strings.Repeat("脆弱性", 100),
 	}
 	for _, in := range inputs {
 		for max := 1; max <= len(in)+2; max++ {
 			got := TruncateBytes(in, max)
 			if !utf8.ValidString(got) {
-				t.Fatalf("输入 %q max=%d: 产出非法 UTF-8 %q", in, max, got)
+				t.Fatalf("入力 %q max=%d: 不正な UTF-8 を生成 %q", in, max, got)
 			}
 			if len(got) > max {
-				t.Fatalf("输入 %q max=%d: 结果 %d 字节超出上限", in, max, len(got))
+				t.Fatalf("入力 %q max=%d: 結果 %d バイトが上限を超過", in, max, len(got))
 			}
-			// 未被截断时不得改动内容。
+			// 切り詰められていないときは内容を変えてはならない。
 			if len(in) <= max && got != in {
-				t.Fatalf("输入 %q max=%d: 未超限却改动了内容 -> %q", in, max, got)
+				t.Fatalf("入力 %q max=%d: 上限内なのに内容を変更 -> %q", in, max, got)
 			}
 		}
 	}
@@ -37,114 +38,117 @@ func TestTruncateBytesKeepsValidUTF8(t *testing.T) {
 func TestTruncateBytesZeroMeansUnlimited(t *testing.T) {
 	long := strings.Repeat("x", 10000)
 	if got := TruncateBytes(long, 0); got != long {
-		t.Fatal("max=0 应表示不限制")
+		t.Fatal("max=0 は制限なしを意味すべき")
 	}
 	if got := TruncateBytes(long, -5); got != long {
-		t.Fatal("max<0 应表示不限制")
+		t.Fatal("max<0 は制限なしを意味すべき")
 	}
 }
 
 func TestTruncateBytesEllipsisBudget(t *testing.T) {
-	// max 小于省略号本身时，不能因为追加省略号而反过来超限。
+	// max が省略記号そのものより小さいとき、省略記号の追加で逆に上限を超えてはならない。
 	got := TruncateBytes("abcdefgh", 1)
 	if len(got) > 1 {
-		t.Fatalf("max=1 时结果 %q 长度 %d 超限", got, len(got))
+		t.Fatalf("max=1 のとき結果 %q の長さ %d が上限超過", got, len(got))
 	}
-	// 正常情况应带省略号。
+	// 通常は省略記号が付くべき。
 	if got := TruncateBytes("abcdefgh", 5); !strings.HasSuffix(got, ellipsis) {
-		t.Fatalf("期望带省略号，得到 %q", got)
+		t.Fatalf("省略記号が付くはずが、得られたのは %q", got)
 	}
 }
 
 func TestTruncateRunesCountsCharactersNotBytes(t *testing.T) {
-	// 与 TruncateBytes 的口径差异必须保留：Telegram 按字符限长，
-	// 用字节口径会把中文消息切到只剩三分之一。
+	// TruncateBytes との基準の違いは保持しなければならない：Telegram は文字数で
+	// 長さを制限し、バイト基準だと日本語メッセージが 3 分の 1 に切られてしまう。
 	s := "一二三四五六七八九十"
 	got := TruncateRunes(s, 5)
 	if n := utf8.RuneCountInString(got); n != 5 {
-		t.Fatalf("期望 5 个字符，得到 %d 个 (%q)", n, got)
+		t.Fatalf("5 文字を期待、得られたのは %d 文字 (%q)", n, got)
 	}
-	// 同样的字符串按字节口径应明显更短。
+	// 同じ文字列をバイト基準で切ると、明らかに短くなるはず。
 	if utf8.RuneCountInString(TruncateBytes(s, 5)) >= 5 {
-		t.Fatal("字节口径不应产出与字符口径相同的字符数")
+		t.Fatal("バイト基準で文字基準と同じ文字数を生んではならない")
 	}
 }
 
 func TestOneLineCollapsesWhitespace(t *testing.T) {
-	got := OneLine("第一行\n\n第二行\t带制表   多空格", 0)
+	got := OneLine("1 行目\n\n2 行目\tタブ付き   複数空白", 0)
 	if strings.ContainsAny(got, "\n\t") {
-		t.Fatalf("应折叠所有空白，得到 %q", got)
+		t.Fatalf("空白をすべて畳むべき、得られたのは %q", got)
 	}
 	if strings.Contains(got, "  ") {
-		t.Fatalf("不应保留连续空格，得到 %q", got)
+		t.Fatalf("連続空白を残してはならない、得られたのは %q", got)
 	}
-	// 截断后仍须可读且合法。
+	// 切り詰め後も読め、かつ正当でなければならない。
 	got = OneLine("一二三四五六七八九十", 4)
 	if n := utf8.RuneCountInString(got); n != 4 {
-		t.Fatalf("期望 4 字符，得到 %d (%q)", n, got)
+		t.Fatalf("4 文字を期待、得られたのは %d (%q)", n, got)
 	}
 }
 
 func TestTruncateHTMLNeverCutsTagInHalf(t *testing.T) {
-	// 直接截断 HTML 会切出 `<a href="htt` 这种残片，平台会拒收整条消息。
-	s := `<b>标题</b>正文正文正文<a href="https://example.com/very/long/path">查看详情</a>`
+	// HTML をそのまま切り詰めると `<a href="htt` のような残片が生まれ、プラット
+	// フォームはメッセージ全体を拒否する。
+	s := `<b>タイトル</b>本文本文本文<a href="https://example.com/very/long/path">詳細を見る</a>`
 	for max := 1; max <= utf8.RuneCountInString(s)+2; max++ {
 		got := TruncateHTML(s, max)
 		if n := utf8.RuneCountInString(got); max > 0 && n > max {
-			t.Fatalf("max=%d: 结果 %d 字符超限", max, n)
+			t.Fatalf("max=%d: 結果 %d 文字が上限超過", max, n)
 		}
-		// 尾部不能有未闭合的 `<`（即最后一段里出现 `<` 却无 `>`）。
+		// 末尾に閉じられていない `<` があってはならない（最後の区間に `<` はあるが `>` がない状態）。
 		if lt := strings.LastIndex(got, "<"); lt >= 0 && !strings.Contains(got[lt:], ">") {
-			t.Fatalf("max=%d: 尾部标签被切断 -> %q", max, got)
+			t.Fatalf("max=%d: 末尾のタグが切断された -> %q", max, got)
 		}
 	}
 }
 
 func TestAssetLineOmitsExcess(t *testing.T) {
 	if got := assetLine(nil, 3); got != "" {
-		t.Fatalf("无资产应返回空串，得到 %q", got)
+		t.Fatalf("資産なしは空文字列を返すべき、得られたのは %q", got)
 	}
 	if got := assetLine([]string{"a", "b"}, 3); got != "a、b" {
-		t.Fatalf("未超限应全列，得到 %q", got)
+		t.Fatalf("上限内なら全件列挙すべき、得られたのは %q", got)
 	}
-	// 超出上限时必须标注总数，否则读者不知道还有多少资产没列出来。
+	// 上限超過時は総数を明記しなければならない。そうでないと読者は資産が何件
+	// 残っているか分からない。
 	got := assetLine([]string{"a", "b", "c", "d", "e"}, 2)
-	if !strings.Contains(got, "等 5 个") {
-		t.Fatalf("应标注总数 5，得到 %q", got)
+	if !strings.Contains(got, "ほか 5 件") {
+		t.Fatalf("総数 5 を明記すべき、得られたのは %q", got)
 	}
 }
 
 func TestSeverityAndStatusLabels(t *testing.T) {
 	if AtLeast("", "low") {
-		t.Fatal("空级别序数为 0，应被任何门槛挡住")
+		t.Fatal("空レベルの序数は 0 なので、あらゆるしきい値に阻まれるべき")
 	}
 	if !AtLeast("critical", "") {
-		t.Fatal("空门槛应放行")
+		t.Fatal("空のしきい値は通過させるべき")
 	}
-	if got := StatusLabel("fixed"); got != "已修复" {
-		t.Fatalf("未知状态映射，得到 %q", got)
+	if got := StatusLabel("fixed"); got != "修正済み" {
+		t.Fatalf("ステータスの対応付けが誤り、得られたのは %q", got)
 	}
-	// 未知状态原样回显，不臆造标签。
+	// 未知のステータスはそのまま返し、勝手にラベルを作らない。
 	if got := StatusLabel("weird_status"); got != "weird_status" {
-		t.Fatalf("未知状态应原样回显，得到 %q", got)
+		t.Fatalf("未知のステータスはそのまま返すべき、得られたのは %q", got)
 	}
 }
 
-// TestTruncateHTMLNeverCutsEntity 覆盖审计指出的一处遗漏：截断不只要避开
-// 半截标签，还要避开被切断的 HTML 实体。
+// TestTruncateHTMLNeverCutsEntity は監査で指摘された 1 つの漏れをカバーする：
+// 切り詰めでは中途半端なタグだけでなく、切断された HTML エンティティも避ける
+// 必要がある。
 //
-// `&amp;` 被切成 `&amp` 之后，一个只认实体的解析器可能拒收**整条**消息——
-// 而超长汇总消息本来就常见，代价太大。
+// `&amp;` が `&amp` に切られると、エンティティしか解釈しないパーサーが**メッセージ
+// 全体**を拒否しうる——長すぎる集約メッセージはよくあるので、代償が大きすぎる。
 func TestTruncateHTMLNeverCutsEntity(t *testing.T) {
 	s := "aaaa&amp;bbbb&lt;cccc&quot;dddd"
 	for max := 1; max <= utf8.RuneCountInString(s)+2; max++ {
 		got := TruncateHTML(s, max)
-		// 尾部不得出现「有 & 但没有对应 ;」的实体残片。
+		// 末尾に「& はあるが対応する ; がない」エンティティ残片が現れてはならない。
 		if amp := strings.LastIndex(got, "&"); amp >= 0 && !strings.Contains(got[amp:], ";") {
-			t.Fatalf("max=%d: 尾部留下实体残片 %q", max, got[amp:])
+			t.Fatalf("max=%d: 末尾にエンティティ残片 %q が残った", max, got[amp:])
 		}
 		if strings.Contains(got, "&amp\x00") {
-			t.Fatalf("max=%d: 出现畸形实体", max)
+			t.Fatalf("max=%d: 不正なエンティティが発生", max)
 		}
 	}
 }

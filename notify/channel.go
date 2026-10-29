@@ -8,43 +8,52 @@ import (
 	"strings"
 )
 
-// Channel 是一个通知渠道的适配器。实现必须**无状态**：同一个实例会被多个渠道
-// 配置并发复用，凭据一律从 cfg 参数传入。
+// Channel は通知チャネルのアダプタ。実装は**ステートレス**でなければならない：
+// 同じインスタンスが複数のチャネル設定で並行に再利用され、資格情報は一律に
+// cfg 引数から渡される。
 type Channel interface {
-	// Kind 返回渠道类型标识，须与注册表的键一致。
+	// Kind はチャネル種別の識別子を返す。レジストリのキーと一致させること。
 	Kind() string
-	// Validate 在保存配置时调用，校验必填字段与格式。返回的错误会直接展示给
-	// 配置者，所以文案要说明「缺哪个字段」而不是泛泛的「配置无效」。
+	// Validate は設定保存時に呼ばれ、必須フィールドと形式を検証する。返すエラーは
+	// 設定者にそのまま表示されるため、メッセージは「どのフィールドが欠けているか」を
+	// 説明すること。曖昧な「設定が無効です」ではいけない。
 	Validate(cfg map[string]any) error
-	// Send 投递一次消息，返回**实际送达的条目数**与错误。
+	// Send はメッセージを 1 回配信し、**実際に届いた件数**とエラーを返す。
 	//
-	// 为什么要返回条数：各平台都有消息长度上限，汇总消息装不下整批时会被截断。
-	// 若调用方无条件把整批标记为已送达，被截掉的那些条目就消失了——消息里看不到、
-	// 投递历史里也显示成功，没有任何地方能发现漏洞从未发出。返回 kept 后，
-	// 调用方只标记前 kept 条，其余留待下一批。
+	// なぜ件数を返すのか：各プラットフォームにはメッセージ長の上限があり、集約
+	// メッセージがバッチ全体を収めきれないときは切り詰められる。呼び出し側が無条件
+	// にバッチ全体を配信済みと記録すると、切り詰められた項目は消えてしまう——メッセージ
+	// にも見えず、配信履歴にも成功と表示され、どこからも「脆弱性が一度も送られて
+	// いない」ことに気づけない。kept を返せば、呼び出し側は先頭 kept 件だけを配信
+	// 済みとし、残りは次のバッチに回せる。
 	//
-	// 返回错误表示投递失败，其中 *PermanentError 表示不该重试。
-	// 失败时 kept 无意义，调用方应忽略它。
+	// エラーを返すのは配信失敗を表し、うち *PermanentError は再試行すべきでない
+	// ことを表す。失敗時は kept は意味を持たないので、呼び出し側は無視すること。
 	Send(ctx context.Context, cfg map[string]any, m Message) (int, error)
-	// DefaultRatePerMin 返回该渠道官方建议的每分钟投递上限，作为新建渠道实例
-	// 时的默认限流值。返回 0 表示无已知限制。
+	// DefaultRatePerMin はそのチャネルが公式に推奨する毎分配信上限を返す。
+	// チャネルインスタンス新規作成時の既定レート制限値として使う。0 は既知の
+	// 制限なしを表す。
 	DefaultRatePerMin() int
-	// SecretKeys 返回该渠道配置里属于凭据的键名。API 回显时这些键的值会被掩码，
-	// 更新时收到掩码值则保留库中的原值。只有实现自己清楚哪些字段算凭据
-	// （企业微信的整个 Webhook 地址就是凭据，而钉钉的只是其中的 secret），
-	// 所以这个知识必须由渠道提供，不能由上层猜测。
+	// SecretKeys はそのチャネル設定のうち資格情報に当たるキー名を返す。API 応答では
+	// これらのキーの値がマスクされ、更新時にマスク値を受け取ったら DB の元の値を
+	// 保持する。どのフィールドが資格情報かは実装自身しか知らない
+	// （WeCom は Webhook アドレス全体が資格情報だが、DingTalk はそのうちの secret
+	// だけ）ので、この知識はチャネルが提供する必要があり、上位層が推測してはならない。
 	SecretKeys() []string
-	// DestinationKeys 返回该渠道配置里决定「消息发往哪里」的键名。
+	// DestinationKeys はそのチャネル設定のうち「メッセージをどこへ送るか」を
+	// 決めるキー名を返す。
 	//
-	// 与 SecretKeys 一样是安全相关的东西：目标地址与凭据是两套独立字段，
-	// 若允许「只改地址、凭据原样保留」，任何能改渠道配置的人都能把库里的真凭据
-	// 发到自己控制的服务器，渠道配置的掩码就完全失去意义。
-	// 详见 PrepareConfigUpdate。
+	// SecretKeys と同じくセキュリティに関わるもの：宛先アドレスと資格情報は
+	// 独立した 2 系統のフィールドであり、もし「アドレスだけ変えて資格情報はそのまま」
+	// を許すと、チャネル設定を変更できる者は誰でも DB の本物の資格情報を自分が
+	// 支配するサーバーへ送りつけられる。チャネル設定のマスクが完全に無意味になる。
+	// 詳しくは PrepareConfigUpdate を参照。
 	DestinationKeys() []string
 }
 
-// registry 是渠道注册表。刻意用显式字面量而不是 init() 自注册：这样「有哪些渠道」
-// 在一个地方就能看全，且新增渠道会在编译期暴露遗漏，而不是靠运行时副作用。
+// registry はチャネルのレジストリ。あえて init() による自己登録ではなく明示的な
+// リテラルにしている：こうすれば「どのチャネルがあるか」が 1 か所で見渡せ、
+// チャネル追加時の漏れは実行時の副作用ではなくコンパイル時に露見する。
 var registry = map[string]Channel{
 	KindDingTalk: dingTalkChannel{},
 	KindFeishu:   feishuChannel{},
@@ -54,19 +63,20 @@ var registry = map[string]Channel{
 	KindEmail:    emailChannel{},
 }
 
-// Get 按类型取渠道实现。
+// Get は種別からチャネル実装を取得する。
 func Get(kind string) (Channel, bool) {
 	c, ok := registry[kind]
 	return c, ok
 }
 
-// ValidKind 报告 kind 是否为受支持的渠道类型。
+// ValidKind は kind がサポートされるチャネル種別かどうかを報告する。
 func ValidKind(kind string) bool {
 	_, ok := registry[kind]
 	return ok
 }
 
-// Kinds 返回全部受支持的渠道类型，按字典序排列（供 UI 下拉稳定展示）。
+// Kinds はサポートされる全チャネル種別を辞書順で返す（UI のドロップダウンを
+// 安定して表示するため）。
 func Kinds() []string {
 	out := make([]string, 0, len(registry))
 	for k := range registry {
@@ -76,16 +86,18 @@ func Kinds() []string {
 	return out
 }
 
-// PermanentError 标记一个不该重试的投递失败：凭据错误、目标拒绝、请求体非法等。
-// 重试只对瞬时故障（网络抖动、限流、对端 5xx）有意义；对永久失败反复退避重试
-// 既不会成功，又会把真正的错误刷没在重试日志里。
+// PermanentError は再試行すべきでない配信失敗を表す：資格情報の誤り、宛先による
+// 拒否、不正なリクエストボディなど。再試行が意味を持つのは一時的な障害
+// （ネットワークの揺らぎ、レート制限、相手側の 5xx）だけであり、恒久的な失敗に
+// 対してバックオフ再試行を繰り返しても成功しないうえ、本当のエラーが再試行ログに
+// 埋もれて見えなくなる。
 type PermanentError struct{ Err error }
 
 func (e *PermanentError) Error() string { return e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
 
-// Permanent 把 err 标记为永久失败。err 为 nil 时返回 nil，
-// 方便写成 `return Permanent(someCheck())`。
+// Permanent は err を恒久的失敗としてマークする。err が nil のときは nil を
+// 返すので、`return Permanent(someCheck())` と書けて便利。
 func Permanent(err error) error {
 	if err == nil {
 		return nil
@@ -93,19 +105,21 @@ func Permanent(err error) error {
 	return &PermanentError{Err: err}
 }
 
-// IsPermanent 报告 err 链上是否带有永久失败标记。
+// IsPermanent は err の連鎖に恒久的失敗のマークが付いているかを報告する。
 func IsPermanent(err error) bool {
 	var pe *PermanentError
 	return errors.As(err, &pe)
 }
 
-// ---- 配置读取helper ----
+// ---- 設定読み取りヘルパー ----
 //
-// 渠道配置来自数据库的 JSONB 列，经 encoding/json 反序列化后是 map[string]any，
-// 数值一律是 float64、数组是 []any。下面这些 helper 统一这层转换，并容忍用户
-// 在 UI 里留空导致的类型偏差（如把端口填成字符串）。
+// チャネル設定はデータベースの JSONB 列から来て、encoding/json で
+// デシリアライズすると map[string]any になり、数値は一律 float64、配列は []any
+// になる。以下のヘルパーはこの変換層を統一し、ユーザーが UI で空欄にしたことによる
+// 型のずれ（ポートを文字列で入力するなど）を許容する。
 
-// cfgString 取字符串配置项，前后空白一律裁掉——从网页表单复制粘贴很容易带上。
+// cfgString は文字列設定項目を取得し、前後の空白を一律に除去する——Web フォーム
+// からのコピー＆ペーストでは付きやすい。
 func cfgString(cfg map[string]any, key string) string {
 	v, ok := cfg[key]
 	if !ok {
@@ -118,7 +132,8 @@ func cfgString(cfg map[string]any, key string) string {
 	return strings.TrimSpace(s)
 }
 
-// cfgInt 取整数配置项，兼容 float64（JSON 默认）与字符串两种来源。
+// cfgInt は整数設定項目を取得し、float64（JSON の既定）と文字列の両方の由来に
+// 対応する。
 func cfgInt(cfg map[string]any, key string) int {
 	switch v := cfg[key].(type) {
 	case float64:
@@ -136,7 +151,7 @@ func cfgInt(cfg map[string]any, key string) int {
 	}
 }
 
-// cfgBool 取布尔配置项，兼容字符串 "true"/"1"。
+// cfgBool は真偽値設定項目を取得し、文字列 "true"/"1" にも対応する。
 func cfgBool(cfg map[string]any, key string) bool {
 	switch v := cfg[key].(type) {
 	case bool:
@@ -149,11 +164,11 @@ func cfgBool(cfg map[string]any, key string) bool {
 	}
 }
 
-// cfgStrings 取字符串数组配置项，自动裁空白并丢弃空串。
+// cfgStrings は文字列配列設定項目を取得し、空白を自動で除去して空文字列を捨てる。
 func cfgStrings(cfg map[string]any, key string) []string {
 	raw, ok := cfg[key].([]any)
 	if !ok {
-		// 也接受单个字符串，方便只有一个值时的表单提交。
+		// 値が 1 つだけのときのフォーム送信を考慮し、単一の文字列も受け付ける。
 		if s := cfgString(cfg, key); s != "" {
 			return []string{s}
 		}
@@ -172,7 +187,8 @@ func cfgStrings(cfg map[string]any, key string) []string {
 	return out
 }
 
-// cfgMap 取字符串映射配置项（如自定义 HTTP 头），键值都裁空白，丢弃空键。
+// cfgMap は文字列マップ設定項目（カスタム HTTP ヘッダーなど）を取得し、キーと値の
+// 両方の空白を除去して空のキーを捨てる。
 func cfgMap(cfg map[string]any, key string) map[string]string {
 	raw, ok := cfg[key].(map[string]any)
 	if !ok {

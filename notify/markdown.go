@@ -5,37 +5,45 @@ import (
 	"strings"
 )
 
-// 本文件是「Markdown 系」渠道（钉钉、企业微信）共用的消息渲染。
-// 飞书用卡片 JSON、Telegram 用 HTML、邮件用 HTML，各自在适配器里渲染。
+// 本ファイルは「Markdown 系」チャネル（DingTalk、WeCom）共通のメッセージ
+// レンダリング。Lark はカード JSON、Telegram は HTML、メールは HTML で、
+// それぞれアダプタ内でレンダリングする。
 
-// maxAssetsShown 是消息里最多列出几个资产。一个漏洞可能锚定几十个资产，
-// 全列会挤爆消息且没有信息价值——第 4 个之后的域名没人会在 IM 里看。
+// maxAssetsShown はメッセージ内に列挙する資産の最大数。1 つの脆弱性に何十もの
+// 資産が紐づきうるので、全部並べるとメッセージが溢れるうえ情報価値もない——
+// 4 件目以降のドメインは IM では誰も見ない。
 const maxAssetsShown = 3
 
-// maxSummaryRunes 是摘要被压缩到多少字符。IM 消息是「提示去看详情」，
-// 不是报告本体，完整内容在平台里。
+// maxSummaryRunes はサマリーを何文字に圧縮するか。IM メッセージは「詳細を見に
+// 行くきっかけ」であり、レポート本体ではない。完全な内容はプラットフォーム側に
+// ある。
 const maxSummaryRunes = 120
 
-// markdownReservedBytes 预留给消息头部（汇总行 + 级别分布 + 可能的截断提示）
-// 与尾部（平台链接）。按整条打包时把这部分从预算里扣掉，保证头尾不会被截掉——
-// 头尾一旦被截，读者连「这是哪一批、还有多少条没显示」都看不出来。
+// markdownReservedBytes はメッセージの先頭（集約行 + レベル分布 + 起こりうる
+// 切り詰め通知）と末尾（プラットフォームへのリンク）に確保する領域。項目単位で
+// 詰め込む際にこの分を予算から差し引き、先頭と末尾が切られないようにする——
+// 先頭と末尾が切られると、読者は「これがどのバッチで、あと何件表示されていないか」
+// さえ分からなくなる。
 const markdownReservedBytes = 320
 
-// markdownEscape 转义 markdown 元字符。
+// markdownEscape は markdown のメタ文字をエスケープする。
 //
-// 为什么必须做：漏洞标题、摘要、类型、资产展示名全都来自**不可信来源**——
-// 标题与摘要出自模型输出（模型读的是被测目标的响应），资产的 url 则是扫描
-// 得到的完整 URL（含目标可控的查询串）。不转义的话，一条标题为
+// なぜ必須か：脆弱性タイトル、サマリー、タイプ、資産表示名はすべて**信頼できない
+// 由来**である——タイトルとサマリーはモデルの出力（モデルが読むのはテスト対象の
+// 応答）、資産の url はスキャンで得た完全な URL（対象が制御できるクエリ文字列を
+// 含む）。エスケープしないと、タイトルが
 //
-//	登录口 SQL 注入\n[紧急：点此验证账号](http://attacker.tld)
+//	ログイン画面 SQL インジェクション\n[緊急：ここをクリックしてアカウント確認](http://attacker.tld)
 //
-// 的漏洞会在安全工程师的钉钉/飞书里渲染成**可点击的外链**；而
-// `![](http://attacker.tld/beacon)` 会在渲染时被客户端拉取，等于通报了
-// 「这条漏洞已经被看过」并泄露阅读者 IP。就算是无恶意的内容，注入的粗体或
-// 引用块也能把下面的严重漏洞挤出折叠线。
+// である脆弱性が、セキュリティエンジニアの DingTalk／Lark で**クリック可能な
+// 外部リンク**としてレンダリングされる。しかも `![](http://attacker.tld/beacon)`
+// はレンダリング時にクライアントから取得され、「この脆弱性は既に閲覧された」こと
+// を通知し、閲覧者の IP まで漏れる。悪意がなくても、注入された太字や引用ブロックは
+// 下にある深刻な脆弱性を折りたたみ線の外へ押し出せる。
 //
-// 转义集合覆盖标题/链接/强调/列表/引用/删除线这几类会改变结构或产生可点击
-// 元素的字符。`\` 必须最先处理，否则会把后面补上的反斜杠再次转义。
+// エスケープ対象はタイトル／リンク／強調／リスト／引用／取り消し線の各類で、
+// 構造を変えたりクリック可能な要素を生んだりする文字を網羅する。`\` を最初に
+// 処理しないと、後から補ったバックスラッシュを二重にエスケープしてしまう。
 func markdownEscape(s string) string {
 	replacer := strings.NewReplacer(
 		`\`, `\\`,
@@ -55,40 +63,45 @@ func markdownEscape(s string) string {
 	return replacer.Replace(s)
 }
 
-// markdownText 把不可信文本压成单行并转义，供 markdown 正文使用。
-// 单行化是转义之外的另一半：换行本身就能伪造出新的列表项或引用块，
-// 而转义字符挡不住它。
+// markdownText は信頼できないテキストを 1 行に圧縮してエスケープし、markdown の
+// 本文に供する。1 行化はエスケープのもう半分：改行そのものが新しいリスト項目や
+// 引用ブロックを偽装でき、エスケープ文字では防げない。
 func markdownText(s string, maxRunes int) string {
 	return markdownEscape(OneLine(s, maxRunes))
 }
 
-// markdownTitle 返回消息标题（IM 平台的标题栏/卡片标题），内容是**未转义的原文**。
+// markdownTitle はメッセージタイトル（IM プラットフォームのタイトルバー／カード
+// タイトル）を返す。内容は**未エスケープの原文**。
 //
-// 这里刻意不做转义：这个标题被四种语境的渲染器共用——markdown 正文、Telegram 的
-// HTML、飞书卡片的 plain_text、以及通用 Webhook 的 JSON 与邮件主题。每个语境的
-// 转义规则都不同（markdown 转义塞进 HTML 会留下可见的反斜杠，塞进 JSON 会污染
-// 数据），所以转义必须由各自的输出端负责，见 writeItem / feishuItemLines /
-// telegramEscape。曾经在共享函数里加过 markdown 转义，结果 Telegram 消息里
-// 出现了 `\(1\)` 这种可见的反斜杠。
+// ここで意図的にエスケープしないのは、このタイトルを 4 つの文脈のレンダラが
+// 共用するため——markdown 本文、Telegram の HTML、Lark カードの plain_text、
+// そして汎用 Webhook の JSON とメールの件名。文脈ごとにエスケープ規則が異なり
+// （markdown エスケープを HTML に入れると目に見えるバックスラッシュが残り、JSON
+// に入れるとデータを汚す）、エスケープは各出力側の責務でなければならない。参照：
+// writeItem / feishuItemLines / telegramEscape。かつて共有関数に markdown
+// エスケープを足した結果、Telegram メッセージに `\(1\)` のような目に見える
+// バックスラッシュが現れた。
 func markdownTitle(m Message) string {
 	if m.Batch {
-		return fmt.Sprintf("漏洞汇总 · 共 %d 条", len(m.Items))
+		return fmt.Sprintf("脆弱性ダイジェスト · 全 %d 件", len(m.Items))
 	}
 	if len(m.Items) == 0 {
-		return "漏洞通知"
+		return "脆弱性通知"
 	}
 	it := m.Items[0]
 	return fmt.Sprintf("[%s] %s", SeverityLabel(it.Severity), OneLine(it.Title(), 0))
 }
 
-// markdownBody 渲染消息正文，返回正文与**实际写入的条目数**。
+// markdownBody はメッセージ本文をレンダリングし、本文と**実際に書き込まれた
+// 件数**を返す。
 //
-// 返回值 kept 是这次投递真正送达的条目数，调用方据此只把前 kept 条标记为
-// 已送达——被渠道长度上限挡在外面的条目必须留待下一批，而不是跟着一起被
-// 标记成功。这正是「静默丢失」的来源：消息被截断了，但投递记录显示全部送达，
-// 没有任何地方能看出后半截从未发出。
+// 戻り値 kept はこの配信で本当に届いた件数であり、呼び出し側はこれに基づいて
+// 先頭 kept 件だけを配信済みとマークする——チャネルの長さ上限で締め出された項目は
+// 次のバッチに残すべきで、一緒に成功とマークしてはならない。これこそが「静かな
+// 消失」の源：メッセージは切り詰められたのに配信記録は全件配信済みと表示され、
+// 後半が一度も送られていないことをどこからも見て取れない。
 //
-// maxBytes<=0 表示不限制。
+// maxBytes<=0 は制限なし。
 func markdownBody(m Message, maxBytes int) (string, int) {
 	if !m.Batch {
 		if len(m.Items) == 0 {
@@ -96,14 +109,14 @@ func markdownBody(m Message, maxBytes int) (string, int) {
 		}
 		var b strings.Builder
 		writeItem(&b, m.Items[0], "", true)
-		// 单条消息即使超长也照发（由最终截断兜底）：一条漏洞的部分信息
-		// 也好过一条都不发。
+		// 単発メッセージは長すぎてもそのまま送る（最終的な切り詰めに任せる）：
+		// 脆弱性の部分的な情報でも、1 件も送らないよりまし。
 		return TruncateBytes(b.String(), maxBytes), 1
 	}
 
 	footer := ""
 	if m.HomeURL != "" {
-		footer = fmt.Sprintf("\n[在平台中查看全部](%s)\n", m.HomeURL)
+		footer = fmt.Sprintf("\n[プラットフォームですべて表示](%s)\n", m.HomeURL)
 	}
 	kept := packItemCount(m.Items, maxBytes, markdownReservedBytes, footer, byteSize, func(it Item, idx int) string {
 		var b strings.Builder
@@ -121,24 +134,27 @@ func markdownBody(m Message, maxBytes int) (string, int) {
 	return TruncateBytes(b.String(), maxBytes), kept
 }
 
-// markdownBatchIntro 渲染汇总消息的开头：时间窗、条数与级别分布。
-// 有了这些，收到汇总的人不用点进平台就能判断这批需不需要立刻处理。
+// markdownBatchIntro は集約メッセージの冒頭をレンダリングする：時間窓、件数、
+// レベル分布。これがあれば、ダイジェストを受け取った人はプラットフォームに
+// 入らずとも、このバッチをすぐ処理すべきか判断できる。
 //
-// items 是**实际装下**的条目，total 是本批应有的总数。两者不同时必须明说
-// 「还有多少条在下一条消息里」——否则读者会以为消息头写的那个数字就是全部，
-// 而后面那些从未发出的条目在界面上完全不存在。
+// items は**実際に収まった**項目、total はこのバッチ本来の総数。両者が異なるときは
+// 「あと何件が次のメッセージにあるか」を必ず明記する——そうしないと読者はメッセージ
+// 冒頭の数字が全部だと誤解し、後ろの一度も送られていない項目は画面上にまったく
+// 存在しないことになる。
 func markdownBatchIntro(m Message, items []Item, total int) string {
 	var b strings.Builder
 	if m.WindowMinutes > 0 {
-		fmt.Fprintf(&b, "**近 %d 分钟新增 %d 个漏洞**", m.WindowMinutes, total)
+		fmt.Fprintf(&b, "**直近 %d 分間に %d 件の脆弱性を検出**", m.WindowMinutes, total)
 	} else {
-		fmt.Fprintf(&b, "**新增 %d 个漏洞**", total)
+		fmt.Fprintf(&b, "**%d 件の脆弱性を検出**", total)
 	}
 	if extra := total - len(items); extra > 0 {
-		fmt.Fprintf(&b, "（本条显示前 %d 条，其余 %d 条将在下一条消息继续）", len(items), extra)
+		fmt.Fprintf(&b, "（このメッセージには先頭 %d 件を表示、残り %d 件は次のメッセージで続きます）", len(items), extra)
 	}
-	// 按级别给出分布，让读者一眼看到有没有严重项。只统计**本条实际包含**的
-	// 条目，保证「严重 3」和下面能数出来的条目一致。
+	// レベルごとの分布を示し、読者が深刻な項目の有無を一目で見られるようにする。
+	// 集計対象は**このメッセージが実際に含む**項目のみで、「深刻 3」と下で数えられる
+	// 項目が一致することを保証する。
 	counts := map[string]int{}
 	for _, it := range items {
 		counts[it.Severity]++
@@ -156,18 +172,20 @@ func markdownBatchIntro(m Message, items []Item, total int) string {
 	return b.String()
 }
 
-// writeItem 渲染单个漏洞条目。
+// writeItem は脆弱性 1 件をレンダリングする。
 //
-// prefix 用于汇总列表的序号；single=true 时渲染完整版（含摘要与回链），
-// 汇总列表里只渲染一行摘要——否则 50 条汇总会变成一篇长文档。
+// prefix は集約リストの番号に使う。single=true のときは完全版（サマリーと
+// バックリンクを含む）をレンダリングし、集約リストではサマリーを 1 行だけに
+// する——さもないと 50 件の集約が長文ドキュメントになる。
 //
-// 所有来自外部的内容（标题/类型/资产/摘要）都过 markdownText：
-// 单行化 + 转义。回链是管理员配置的 public_base_url 拼出来的，不是不可信内容，
-// 且必须是可点的链接，所以原样输出。
+// 外部由来の内容（タイトル／タイプ／資産／サマリー）はすべて markdownText を
+// 通す：1 行化 + エスケープ。バックリンクは管理者が設定した public_base_url を
+// 組み立てたもので信頼できない内容ではなく、クリック可能なリンクでなければ
+// ならないので、そのまま出力する。
 func writeItem(b *strings.Builder, it Item, prefix string, single bool) {
 	line := fmt.Sprintf("%s**%s · %s**", prefix, SeverityLabel(it.Severity), markdownText(it.Title(), 0))
 	if !single {
-		// 汇总模式：单行呈现，资产与摘要压缩后跟在后面。
+		// 集約モード：1 行で提示し、資産とサマリーを圧縮して後ろに付ける。
 		var extras []string
 		if a := assetLine(it.Assets, maxAssetsShown); a != "" {
 			extras = append(extras, markdownText(a, 0))
@@ -183,21 +201,21 @@ func writeItem(b *strings.Builder, it Item, prefix string, single bool) {
 	}
 	b.WriteString(line + "\n")
 	if it.IsStatusChange() {
-		fmt.Fprintf(b, "**状态变更**：%s → %s\n",
+		fmt.Fprintf(b, "**ステータス変更**：%s → %s\n",
 			markdownText(StatusLabel(it.FromStatus), 0), markdownText(StatusLabel(it.ToStatus), 0))
 	}
 	if it.VulnClass != "" && it.VulnClass != it.Title() {
-		fmt.Fprintf(b, "**类型**：%s\n", markdownText(it.VulnClass, 0))
+		fmt.Fprintf(b, "**タイプ**：%s\n", markdownText(it.VulnClass, 0))
 	}
 	if a := assetLine(it.Assets, maxAssetsShown); a != "" {
-		fmt.Fprintf(b, "**资产**：%s\n", markdownText(a, 0))
+		fmt.Fprintf(b, "**資産**：%s\n", markdownText(a, 0))
 	}
 	if it.Summary != "" {
 		if s := markdownText(it.Summary, maxSummaryRunes); s != "" {
-			fmt.Fprintf(b, "**摘要**：%s\n", s)
+			fmt.Fprintf(b, "**サマリー**：%s\n", s)
 		}
 	}
 	if it.DetailURL != "" {
-		fmt.Fprintf(b, "[查看详情](%s)\n", it.DetailURL)
+		fmt.Fprintf(b, "[詳細を見る](%s)\n", it.DetailURL)
 	}
 }

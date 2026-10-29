@@ -450,19 +450,19 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	if contextErr != nil {
 		// Invalid current arguments cannot be reviewed faithfully, regardless of
 		// the configured model-failure strategy. A human must resolve the input.
-		out = Decision{Action: "ask", ModelFallback: true, Message: "审查上下文不完整，需要人工确认：" + contextErr.Error()}
+		out = Decision{Action: "ask", ModelFallback: true, Message: "レビュー用コンテキストが不完全なため、手動での確認が必要です: " + contextErr.Error()}
 	} else {
 		modelInput, _ = json.Marshal(input)
 		out, err = rv(cctx, cfg.ProfileID, cfg.Prompt, input)
 	}
 	if err != nil {
-		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "模型审批失败,按失败策略处理: " + err.Error()}
+		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "モデル審査に失敗したため、失敗時ポリシーに従って処理しました: " + err.Error()}
 	}
 	switch out.Action {
 	case "allow", "ask", "deny":
 		// valid verdict
 	default:
-		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "模型输出无法解析,按失败策略处理"}
+		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "モデル出力を解析できないため、失敗時ポリシーに従って処理しました"}
 	}
 	// A model verdict never carries a rule; keep RuleID 0 (→ NULL) for history.
 	out.RuleID = 0
@@ -476,6 +476,8 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	out.ProfileID = cfg.ProfileID
 	configJSON, _ := json.Marshal(cfg)
 	out.ConfigDigest = digestInput(configJSON)
+	// プレフィックス [模型] はフロントエンドがモデル判定を識別するために使うため、
+	// 互換性のため中国語のまま固定する（web/src/components/approval-records.tsx 等）。
 	if out.Message == "" {
 		out.Message = "[模型] " + judgeActionLabel(out.Action)
 	} else if !strings.HasPrefix(out.Message, "[模型]") {
@@ -492,11 +494,11 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 func judgeActionLabel(action string) string {
 	switch action {
 	case "allow":
-		return "放行"
+		return "許可"
 	case "deny":
-		return "拦截"
+		return "遮断"
 	case "ask":
-		return "转人工审批"
+		return "手動承認へ回付"
 	default:
 		return action
 	}
@@ -550,9 +552,9 @@ func ruleMatches(r compiledRule, toolName string, input []byte) bool {
 func defaultMessage(action, name string) string {
 	switch action {
 	case "deny":
-		return "拦截规则 [" + name + "] 禁止执行此工具"
+		return "インターセプトルール [" + name + "] により、このツールの実行は禁止されています"
 	case "ask":
-		return "拦截规则 [" + name + "] 要求用户审批，请等待"
+		return "インターセプトルール [" + name + "] によりユーザー承認が必要です。承認をお待ちください"
 	default:
 		return ""
 	}
@@ -608,7 +610,9 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		"input":      json.RawMessage(input),
 	})
 	activity := db.Activity{
-		Kind:    "intercept_request",
+		Kind: "intercept_request",
+		// 要約フォーマットはフロントエンドとの互換性のため中国語のまま維持する
+		// （web/src/components/transcript.tsx の `/工具\s+(\S+)\s+请求/` が解析に使う）。
 		Summary: fmt.Sprintf("工具 %s 请求审批 (#%d)", toolName, pendingID),
 		Detail:  string(detail),
 	}
@@ -628,8 +632,8 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		case allowed := <-ch:
 			return allowed
 		case <-ctx.Done():
-			_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-			_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
+			_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "作業がキャンセルされた")
+			_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "実行前に作業がキャンセルされた", false)
 			return false
 		}
 	}
@@ -649,7 +653,7 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		if allowed {
 			action = "allow"
 		}
-		resolved, err := i.db.ResolveIntercept(pendingID, "timeout", action, "审批超时，按超时策略处理")
+		resolved, err := i.db.ResolveIntercept(pendingID, "timeout", action, "承認がタイムアウトしたため、タイムアウトポリシーに従って処理しました")
 		if err != nil {
 			return false
 		}
@@ -659,13 +663,13 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		}
 		return allowed
 	case <-ctx.Done():
-		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
+		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "作業がキャンセルされた")
+		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "実行前に作業がキャンセルされた", false)
 		return false
 	}
 }
 
-var ErrAlreadyDecided = errors.New("审批已处理或不存在，请刷新记录")
+var ErrAlreadyDecided = errors.New("承認は既に処理済みか存在しません。記録を更新してください")
 
 // Decide resolves a pending request. Called by the HTTP decide endpoint.
 func (i *Interceptor) Decide(pendingID int64, allowed bool) error {
@@ -673,9 +677,9 @@ func (i *Interceptor) Decide(pendingID int64, allowed bool) error {
 	if allowed {
 		status = "allowed"
 	}
-	action, reason := "deny", "人工拒绝执行"
+	action, reason := "deny", "ユーザーによる実行拒否"
 	if allowed {
-		action, reason = "allow", "人工允许执行"
+		action, reason = "allow", "ユーザーによる実行許可"
 	}
 	resolved, err := i.db.ResolveIntercept(pendingID, status, action, reason)
 	if err != nil {

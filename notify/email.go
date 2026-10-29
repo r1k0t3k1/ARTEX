@@ -14,43 +14,47 @@ import (
 	"time"
 )
 
-// emailDialTimeout / emailSessionTimeout 分别约束建连与整段 SMTP 会话。
-// net/smtp 自身没有任何超时机制，不设这两道的话，一个卡住的对端会让
-// 投递 goroutine 永久挂在那里——而 dispatcher 是单 goroutine 串行处理的，
-// 等于整个通知系统停摆。
+// emailDialTimeout / emailSessionTimeout はそれぞれ接続確立と SMTP セッション
+// 全体を制限する。net/smtp 自体にはタイムアウト機構が一切なく、この 2 つを
+// 設けないと、固まった相手が配信 goroutine を永久にぶら下げてしまう——しかも
+// dispatcher は単一 goroutine で直列に処理するため、通知システム全体が停止する。
 const (
 	emailDialTimeout    = 10 * time.Second
 	emailSessionTimeout = 45 * time.Second
 )
 
-// emailChannel 实现 SMTP 邮件投递。
+// emailChannel は SMTP メール配信を実装する。
 type emailChannel struct{}
 
 func (emailChannel) Kind() string { return KindEmail }
 
-// 邮件没有平台限流，但不该用它刷屏；给一个宽松的默认值。
+// メールにはプラットフォームのレート制限はないが、これで画面を埋め尽くすべきでも
+// ない。緩めの既定値を与える。
 func (emailChannel) DefaultRatePerMin() int { return 60 }
 
-// 只掩码密码。SMTP 主机、账号、收件人都不算秘密，掩码它们只会让编辑变麻烦。
+// パスワードだけをマスクする。SMTP ホスト、アカウント、宛先は秘密ではないので、
+// これらをマスクすると編集が面倒になるだけ。
 func (emailChannel) SecretKeys() []string { return []string{"password"} }
 
-// host/port 决定把密码交给哪台服务器；tls 决定是否加密传输。三者任一变化都
-// 要求重新表态密码——顺带让「关掉 TLS」这一步必须显式带上凭据，而不是顺手一改。
+// host/port はパスワードをどのサーバーに渡すかを決め、tls は通信を暗号化するかを
+// 決める。3 つのいずれかが変わればパスワードの再提示を要求する——ついでに
+// 「TLS を切る」という操作にも資格情報を明示的に持たせ、ついでの変更で済ませられない
+// ようにする。
 func (emailChannel) DestinationKeys() []string { return []string{"host", "port", "tls"} }
 
 func (emailChannel) Validate(cfg map[string]any) error {
 	if cfgString(cfg, "host") == "" {
-		return errors.New("缺少 SMTP 服务器地址")
+		return errors.New("SMTP サーバーアドレスがありません")
 	}
 	port := cfgInt(cfg, "port")
 	if port <= 0 || port > 65535 {
-		return errors.New("SMTP 端口无效（应为 1-65535）")
+		return errors.New("SMTP ポートが無効です（1-65535 の範囲で指定してください）")
 	}
 	if cfgString(cfg, "from") == "" {
-		return errors.New("缺少发件人地址")
+		return errors.New("差出人アドレスがありません")
 	}
 	if len(cfgStrings(cfg, "to")) == 0 {
-		return errors.New("至少需要一个收件人地址")
+		return errors.New("宛先アドレスが少なくとも 1 つ必要です")
 	}
 	return nil
 }
@@ -79,62 +83,71 @@ func (c emailChannel) Send(ctx context.Context, cfg map[string]any, m Message) (
 	}
 	defer client.Close()
 
-	// STARTTLS：对端支持就升级。明文会话下不能发凭据（见下面的 auth 说明）。
+	// STARTTLS：相手が対応していればアップグレードする。平文セッションでは資格情報を
+	// 送れない（下の auth の説明を参照）。
 	if !implicitTLS {
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-				return 0, fmt.Errorf("STARTTLS 失败: %w", err)
+				return 0, fmt.Errorf("STARTTLS に失敗しました: %w", err)
 			}
 		}
 	}
 	if username != "" {
 		if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
-			// smtp.PlainAuth 会拒绝在未加密连接上发送凭据（除非目标是 localhost）。
-			// 这是**正确**的安全行为，不能绕过，但需要把原因翻译清楚——
-			// 否则使用者只会看到「unencrypted connection」而不知道该怎么办。
+			// smtp.PlainAuth は暗号化されていない接続で資格情報を送るのを拒否する
+			// （宛先が localhost の場合を除く）。これは**正しい**セキュリティ挙動で
+			// 回避してはならないが、理由を分かりやすく伝える必要がある——そうしないと
+			// 利用者には「unencrypted connection」とだけ見えて、どうすればよいか
+			// 分からない。
 			if strings.Contains(err.Error(), "unencrypted connection") {
-				return 0, Permanent(fmt.Errorf("拒发凭据：连接未加密。请启用 TLS，或改用 465 端口(隐式 TLS)，或把「启用 TLS」勾上 (%w)", err))
+				return 0, Permanent(fmt.Errorf("資格情報の送信を拒否しました：接続が暗号化されていません。TLS を有効にするか、465 ポート（暗黙的 TLS）に変更するか、「TLS を有効化」にチェックを入れてください (%w)", err))
 			}
-			return 0, Permanent(fmt.Errorf("SMTP 认证失败: %w", err))
+			return 0, Permanent(fmt.Errorf("SMTP 認証に失敗しました: %w", err))
 		}
 	}
 	if err := client.Mail(from); err != nil {
-		return 0, smtpStageError(fmt.Sprintf("发件人 %s 被拒", from), err)
+		return 0, smtpStageError(fmt.Sprintf("差出人 %s が拒否されました", from), err)
 	}
 	for _, rcpt := range to {
 		if err := client.Rcpt(rcpt); err != nil {
-			return 0, smtpStageError(fmt.Sprintf("收件人 %s 被拒", rcpt), err)
+			return 0, smtpStageError(fmt.Sprintf("宛先 %s が拒否されました", rcpt), err)
 		}
 	}
 	w, err := client.Data()
 	if err != nil {
-		return 0, fmt.Errorf("SMTP DATA 失败: %w", err)
+		return 0, fmt.Errorf("SMTP DATA に失敗しました: %w", err)
 	}
 	if _, err := w.Write([]byte(msg)); err != nil {
-		return 0, fmt.Errorf("写入邮件正文失败: %w", err)
+		return 0, fmt.Errorf("メール本文の書き込みに失敗しました: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return 0, fmt.Errorf("提交邮件失败: %w", err)
+		return 0, fmt.Errorf("メールの送信に失敗しました: %w", err)
 	}
-	// Quit 失败不影响「邮件已被服务器接收」这个事实，因此忽略其错误。
+	// Quit の失敗は「メールがサーバーに受理された」という事実を左右しないので、
+	// そのエラーは無視する。
 	_ = client.Quit()
-	// 邮件没有长度截断（HTML 正文全部发送），整批都算送达。
+	// メールには長さの切り詰めがない（HTML 本文を全部送る）ので、バッチ全体が
+	// 配信済みとみなされる。
 	return len(m.Items), nil
 }
 
-// emailDial 建立 SMTP 连接。
+// emailDial は SMTP 接続を確立する。
 //
-// implicitTLS=true 走 465 这类「连上即 TLS」的方式；false 走 25/587 明文建连后再
-// STARTTLS。两者不能混：对 465 端口发明文 greeting 会被直接断开。
+// implicitTLS=true は 465 のような「接続即 TLS」方式。false は 25/587 で平文接続
+// してから STARTTLS する。両者は混用できない：465 ポートに平文の greeting を
+// 送ると即座に切断される。
 //
-// 会话期限在**建连处**就设好（而非事后补设），因为 net/smtp 的 Client 把底层
-// 连接藏在未导出字段里，外部拿不到它；连接一旦交出去就只能靠预先设置的 deadline
-// 兜底。这也顺带覆盖了握手阶段的阻塞。
-// Control 挂 blockInternalDial 与 HTTP 系渠道共用同一道守卫。不挂的话 SMTP
-// 就是整套 SSRF 防护的缺口：host 填 169.254.169.254 或 127.0.0.1 能直接连上，
-// 而 smtp.NewClient 握手失败时会把对端返回的那一行包进错误、经 last_error
-// 由投递历史接口回显，构成半盲读原语；「连接被拒 vs 超时」的耗时差异还能
-// 用来探测端口。拨号阶段是最终生效点，也覆盖 DNS 重绑定。
+// セッション期限は**接続確立時**に設定する（後から追加設定するのではなく）。
+// net/smtp の Client は基盤の接続を未公開フィールドに隠し、外部から取得できない
+// ため、接続を渡してしまった後は事前に設定した deadline に頼るしかない。これにより
+// ハンドシェイク段階のブロッキングも併せてカバーされる。
+// Control に blockInternalDial を掛け、HTTP 系チャネルと同じガードを共有する。
+// 掛けないと SMTP が SSRF 防御全体の穴になる：host に 169.254.169.254 や
+// 127.0.0.1 を書けば直接接続でき、smtp.NewClient のハンドシェイク失敗時には相手が
+// 返した 1 行がエラーに包まれ、last_error 経由で配信履歴 API から返るため、
+// 半盲読み取りプリミティブが成立する。「接続拒否 vs タイムアウト」の所要時間差も
+// ポートプローブに使える。ダイヤル段階が最終的な適用点で、DNS リバインディングも
+// カバーする。
 func emailDial(ctx context.Context, addr, host string, implicitTLS bool) (*smtp.Client, error) {
 	d := &net.Dialer{Timeout: emailDialTimeout, Control: blockInternalDial}
 	var conn net.Conn
@@ -145,28 +158,31 @@ func emailDial(ctx context.Context, addr, host string, implicitTLS bool) (*smtp.
 		conn, err = d.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("连接 SMTP 服务器失败: %w", err)
+		return nil, fmt.Errorf("SMTP サーバーへの接続に失敗しました: %w", err)
 	}
 	_ = conn.SetDeadline(time.Now().Add(emailSessionTimeout))
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("SMTP 握手失败: %w", err)
+		return nil, fmt.Errorf("SMTP ハンドシェイクに失敗しました: %w", err)
 	}
 	return client, nil
 }
 
-// smtpStageError 按 SMTP 应答码把某个阶段的失败分成「可重试」与「永久失败」。
+// smtpStageError は SMTP 応答コードに応じて、ある段階の失敗を「再試行可能」と
+// 「恒久的失敗」に振り分ける。
 //
-// 为什么必须区分：SMTP 的 4xx 与 5xx 语义完全不同——
-//   - 4xx（450 灰名单、451 本地错误、452 存储不足）是**临时**拒绝，
-//     正规做法是稍后重试；尤其是灰名单，几乎每次首次投递都会遇到。
-//   - 5xx（550 用户不存在、553 地址非法）是永久拒绝，重试没有意义。
+// なぜ区別が必要か：SMTP の 4xx と 5xx は意味がまったく異なる——
+//   - 4xx（450 グレーリスト、451 ローカルエラー、452 保存容量不足）は**一時的**な
+//     拒否で、正攻法はしばらくしてから再試行すること。とくにグレーリストは、
+//     ほぼ毎回の初回配信で遭遇する。
+//   - 5xx（550 ユーザー不在、553 不正なアドレス）は恒久的な拒否で、再試行に意味はない。
 //
-// 若一律判永久失败，一个启用灰名单的邮件服务器会让**每一条**推送都在第一次
-// 尝试后落入 failed——而这类失败恰恰是自动重试最该发挥作用的场景。
-// 应答码取错误文本的前三位数字；取不到码时按可重试处理（宁可多试一次，
-// 也不要因为解析不出就把可能的瞬时故障判死）。
+// 一律に恒久的失敗と判定すると、グレーリストを有効にしたメールサーバーは**すべての**
+// 配信を 1 回目の試行後に failed にしてしまう——しかもそうした失敗こそ自動再試行が
+// 最も力を発揮すべき場面である。応答コードはエラーテキストの先頭 3 桁から取り、
+// 取れないときは再試行可能として扱う（1 回余計に試す方が、解析できないという
+// 理由で起こりうる一時障害を恒久失敗と断定するよりまし）。
 func smtpStageError(what string, err error) error {
 	code := smtpReplyCode(err.Error())
 	if code >= 500 && code < 600 {
@@ -175,8 +191,9 @@ func smtpStageError(what string, err error) error {
 	return fmt.Errorf("%s: %w", what, err)
 }
 
-// smtpReplyCode 从 SMTP 错误文本里取前导的三位应答码，取不到返回 0。
-// net/smtp 不导出错误码字段，只能从文本里取；格式为「450 4.7.1 ...」。
+// smtpReplyCode は SMTP のエラーテキストから先頭の 3 桁の応答コードを取り、
+// 取れなければ 0 を返す。net/smtp はエラーコードのフィールドを公開しないので、
+// テキストから取るしかない。形式は「450 4.7.1 ...」。
 func smtpReplyCode(text string) int {
 	if len(text) < 3 {
 		return 0
@@ -188,24 +205,26 @@ func smtpReplyCode(text string) int {
 	return n
 }
 
-// buildEmailMessage 组装完整的 RFC 5322 邮件。
+// buildEmailMessage は完全な RFC 5322 メールを組み立てる。
 //
-// 正文用 base64 编码有两个原因：一是 SMTP 规定单行不超过 1000 字节，而 HTML
-// 正文（尤其汇总邮件）很容易出现超长行；二是 base64 天然不会出现以 "." 开头
-// 的行，省去 SMTP 点号转义的麻烦。
+// 本文を base64 でエンコードする理由は 2 つ：第一に、SMTP は 1 行 1000 バイトを
+// 超えてはならないが、HTML 本文（とくに集約メール）は長い行が容易に発生する。
+// 第二に、base64 は "." で始まる行を自然に生まないため、SMTP のドットエスケープの
+// 手間が省ける。
 func buildEmailMessage(from string, to []string, m Message) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
-	// 中文主题必须做 RFC 2047 编码，否则会被客户端显示成乱码。
+	// 日本語の件名は RFC 2047 エンコードが必須で、そうしないとクライアントで
+	// 文字化けして表示される。
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", htmlTitle(m)))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 	b.WriteString("Content-Transfer-Encoding: base64\r\n")
-	// 邮件没有长度硬上限，因此不截断正文。
+	// メールには長さの厳格な上限がないので、本文は切り詰めない。
 	b.WriteString("\r\n")
 	encoded := base64.StdEncoding.EncodeToString([]byte(htmlBody(m, 0)))
-	// base64 按 76 字符折行，符合 RFC 2045。
+	// base64 は 76 文字で折り返し、RFC 2045 に準拠する。
 	for len(encoded) > 76 {
 		b.WriteString(encoded[:76] + "\r\n")
 		encoded = encoded[76:]
