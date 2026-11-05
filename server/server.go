@@ -226,6 +226,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
+		s.localizeSeededDefaults() // 旧中国語版が seed した未編集の既定値を日本語へ(一度だけ)
 		go s.evidenceStore().RunGC(s.ctx)
 		s.seedPythonInterpreter()     // カスタムスクリプトツール：起動時に python インタプリタを検出して登録(空のときのみ)
 		go newScheduler(s).Run(s.ctx) // P3 トリガースケジューラ(定期/finding/ゴールイベント)。カスタム agent のみ
